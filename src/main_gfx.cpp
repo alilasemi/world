@@ -1,7 +1,9 @@
 #include "color_map.h"
 #include "defines.h"
+#include "dormand_prince.h"
 #include "shader.h"
 #include "simulation.h"
+#include "particle_drawer.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -45,18 +47,14 @@ int main() {
     // Compile and link shaders
     Shader shader("src/vertex.glsl", "src/fragment.glsl");
 
+
     // Set up simulation
-    const unsigned N = 200;
-    const float visc = 1e-5f;
-    const float diff = 1e-5f;
-    const float dt = 0.001f;
-    const unsigned n_iter = 100;
-    Simulation sim(N, visc, diff, dt, n_iter);
-    float max_rho = 10.f;
-    sim.set_inflow_boundary_condition(-0.2f, 0.2f, InflowBoundaryCondition::Position::TOP,
-            max_rho, 0.f);
-    sim.initialize_to_stagnant_fluid(1.f);
-    //sim.initialize_to_two_stagnant_fluids(1.f, 10.f);
+    Simulation sim;
+    DormandPrince<Simulation> integrator(sim);
+
+    // Set up particle drawer
+    ParticleDrawer drawer(sim.n, 20);
+    drawer.draw(sim.xx, sim.xy);
 
     // Set up vertex buffer objects and configure vertex attributes
     unsigned VBO_nodes, VBO_color, VAO, EBO;
@@ -67,34 +65,8 @@ int main() {
     // Must bind VAO before setting up VBOs and attribute pointers
     glBindVertexArray(VAO);
 
-    // An octagon centered around 0, 0, with radius of .5
-    float r = .5;
-    std::vector<float> node_coords = {
-        r, 0, 0,
-        r / std::sqrt(2.f), r / std::sqrt(2.f), 0,
-        0, r, 0,
-        -r / std::sqrt(2.f), r / std::sqrt(2.f), 0,
-        -r, 0, 0,
-        -r / std::sqrt(2.f), -r / std::sqrt(2.f), 0,
-        0, -r, 0,
-        r / std::sqrt(2.f), -r / std::sqrt(2.f), 0,
-        0, 0, 0
-    };
-    std::vector<int> triangles = {
-        0, 1, 8,
-        1, 2, 8,
-        2, 3, 8,
-        3, 4, 8,
-        4, 5, 8,
-        5, 6, 8,
-        6, 7, 8,
-        7, 0, 8
-    };
-
-
-    // Vertex positions
+    // Vertex positions (the buffer data will be updated each frame)
     glBindBuffer(GL_ARRAY_BUFFER, VBO_nodes);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(node_coords.size() * sizeof(float)), node_coords.data(), GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, static_cast<GLsizeiptr>(3 * sizeof(float)), static_cast<void*>(0));
     glEnableVertexAttribArray(0);
 
@@ -105,14 +77,14 @@ int main() {
 
     // Element buffer
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(triangles.size() * sizeof(int)),
-            triangles.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(drawer.triangles.size() * sizeof(int)),
+            drawer.triangles.data(), GL_STATIC_DRAW);
 
     // Color map
     ColorMap color_map("assets/color_maps/magma.csv");
 
     // Render loop
-    std::vector<float> colors(node_coords.size());
+    std::vector<float> colors(drawer.node_coords.size());
     int frame_count = 0;
     while (!glfwWindowShouldClose(window)) {
         // Receive user input
@@ -130,35 +102,33 @@ int main() {
 //                colors[IX(i,j)*3 + 2] = rgb[2]; // Blue channel
 //            }
 //        }
-        colors = {
-            1.f, 0.f, 0.f,
-            1.f, 0.5f, 0.f,
-            1.f, 1.f, 0.f,
-            0.5f, 1.f, 0.f,
-            0.f, 1.f, 0.f,
-            0.f, 1.f, 0.5f,
-            0.f, 1.f, 1.f,
-            0.5f, 0.5f, 1.f,
-            1.f, 0.5f, 1.f
-        };
+
+        // Update vertex positions
+        glBindBuffer(GL_ARRAY_BUFFER, VBO_nodes);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(drawer.node_coords.size() * sizeof(float)), drawer.node_coords.data(), GL_STATIC_DRAW);
+
+        // Update vertex colors
+        std::fill(colors.begin(), colors.end(), 1.f); // Set all vertices to white for now
         glBindBuffer(GL_ARRAY_BUFFER, VBO_color);
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(colors.size() * sizeof(float)), colors.data(), GL_DYNAMIC_DRAW);
 
         // Render background
-        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+        glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         // Render the fluid
         shader.use();
         glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sim.triangles.size() * sizeof(int)), GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(drawer.triangles.size() * sizeof(int)), GL_UNSIGNED_INT, 0);
 
         // GLFW: swap buffers and poll user inputs
         glfwSwapBuffers(window);
         glfwPollEvents();
 
         // Advance the simulation by one step
-        sim.take_step();
+        integrator.take_step();
+        sim.unpack_state();
+        drawer.draw(sim.xx, sim.xy);
         ++frame_count;
     }
 
