@@ -21,6 +21,8 @@ include_paths = $(src_dir) external/glfw/build/include/ external/glad/include/ e
 warnings = -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wreorder
 # Compiler flags
 flags = $(foreach dir, $(include_paths), -I$(dir)) -std=c++17 -O3
+debug: flags += -g -DDEBUG
+debug: all
 # Libraries and locations
 ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl
 # Useful variables

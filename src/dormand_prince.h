@@ -8,13 +8,14 @@ public:
     System& system;
 
     DormandPrince(System& _system);
+    DormandPrince(System& _system, const float _dt);
 
     void take_step();
 
 private:
     bool first_step;
-    float t;
     float dt;
+    bool adaptive_timestepping = true;
     std::vector<float> state_new;
     std::vector<float> state_hat;
     std::vector<std::vector<float>> k;

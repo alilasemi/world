@@ -59,11 +59,13 @@ delta = 1e-3
 first_step = True
 while t[-1] < t_final:
     xhat, xnew = step(dt[-1], x[-1], t[-1], first_step)
+    breakpoint()
     first_step = False
 
     error = np.abs(xnew - xhat)
     p = 4
-    dt_new = .9 * dt[-1] * (delta / np.abs(error)) ** (1/(p+1))
+#    dt_new = .9 * dt[-1] * (delta / np.abs(error)) ** (1/(p+1))
+    dt_new = .02
 
     t.append(t[-1] + dt[-1])
     x.append(xnew)
