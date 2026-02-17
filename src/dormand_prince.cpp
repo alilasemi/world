@@ -72,6 +72,10 @@ void DormandPrince<System>::take_step() {
     // Store solution as the higher order one
     system.time += dt;
     system.state = state_new;
+    for (size_t dof = 0; dof < system.state.size(); ++dof) {
+        std::cout << system.state[dof] << " ";
+    }
+    std::cout << std::endl;
 
     // Error estimation and timestep update
     float error = 0;

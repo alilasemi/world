@@ -50,7 +50,7 @@ int main() {
 
     // Set up simulation
     Simulation sim;
-    DormandPrince<Simulation> integrator(sim);
+    DormandPrince<Simulation> integrator(sim, 0.01f);
 
     // Set up particle drawer
     ParticleDrawer drawer(sim.n, 20);
