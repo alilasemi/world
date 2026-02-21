@@ -25,9 +25,13 @@ public:
 private:
     void resize(const size_t new_n);
 
+    void update_grid();
+
     std::vector<size_t> material;
     std::vector<float> mass;
     std::vector<std::vector<float>> c_a;
     std::vector<std::vector<float>> c_r;
     std::vector<std::vector<float>> c_d;
+
+    std::vector<std::vector<std::vector<size_t>>> grid;
 };

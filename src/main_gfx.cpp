@@ -51,7 +51,7 @@ int main() {
 
     // Set up simulation
     ParticleDynamics sim;
-    sim.initialize_to_cube(-.8, -.8);
+    sim.initialize_to_cube(-.9, -.9);
     SemiImplicitEuler<ParticleDynamics> integrator(sim, 0.01f);
 //    DormandPrince<ParticleDynamics> integrator(sim, 0.01f);
 
@@ -129,7 +129,7 @@ int main() {
         glfwPollEvents();
 
         // Advance the simulation
-        for (int steps = 0; steps < 10; ++steps) {
+        for (int steps = 0; steps < 20; ++steps) {
             integrator.take_step();
         }
         sim.unpack_state();

@@ -31,9 +31,9 @@ void SemiImplicitEuler<System>::take_step() {
     }
     system.time += dt;
     std::cout << "t = " << system.time << ": ";
-    for (size_t dof = 0; dof < system.state.size(); ++dof) {
-        std::cout << system.state[dof] << " ";
-    }
+//    for (size_t dof = 0; dof < system.state.size(); ++dof) {
+//        std::cout << system.state[dof] << " ";
+//    }
     std::cout << std::endl;
 
 //    // I want the dt to be .001 when y (aka state[1]) is around -1,
