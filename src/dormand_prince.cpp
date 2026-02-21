@@ -1,7 +1,7 @@
 #include "dormand_prince.h"
 
 #include "defines.h"
-#include "simulation.h"
+#include "particle_dynamics.h"
 #include "example_odes.h"
 
 #include <cmath>
@@ -95,5 +95,5 @@ void DormandPrince<System>::take_step() {
 }
 
 
-template class DormandPrince<Simulation>;
+template class DormandPrince<ParticleDynamics>;
 template class DormandPrince<ExampleODE>;

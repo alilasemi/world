@@ -4,7 +4,7 @@
 #include <cmath>
 
 #include "example_odes.h"
-#include "simulation.h"
+#include "particle_dynamics.h"
 
 
 std::vector<float> linspace(const float start, const float end, const size_t num_points) {

@@ -1,8 +1,9 @@
 #include "color_map.h"
 #include "defines.h"
 #include "dormand_prince.h"
+#include "semi_implicit_euler.h"
 #include "shader.h"
-#include "simulation.h"
+#include "particle_dynamics.h"
 #include "particle_drawer.h"
 
 #include <glad/glad.h>
@@ -49,8 +50,10 @@ int main() {
 
 
     // Set up simulation
-    Simulation sim;
-    DormandPrince<Simulation> integrator(sim, 0.01f);
+    ParticleDynamics sim;
+    sim.initialize_to_cube(-.8, -.8);
+    SemiImplicitEuler<ParticleDynamics> integrator(sim, 0.01f);
+//    DormandPrince<ParticleDynamics> integrator(sim, 0.01f);
 
     // Set up particle drawer
     ParticleDrawer drawer(sim.n, 20);
@@ -125,8 +128,10 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
 
-        // Advance the simulation by one step
-        integrator.take_step();
+        // Advance the simulation
+        for (int steps = 0; steps < 10; ++steps) {
+            integrator.take_step();
+        }
         sim.unpack_state();
         drawer.draw(sim.xx, sim.xy);
         ++frame_count;

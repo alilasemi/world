@@ -14,7 +14,7 @@ public:
 private:
     const int n;
     const int num_triangles;
-    const float radius = 0.1f;
+    const float radius = 0.05f;
 
     void create_triangle_connectivity();
 };
