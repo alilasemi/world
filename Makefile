@@ -1,5 +1,8 @@
+SHELL := /bin/bash
 # Compiler
 CXX = g++
+NVCC_dir = /usr/local/cuda-13.1/
+NVCC = $(NVCC_dir)/bin/nvcc
 # Executable names
 exe = real_time_fluid
 test_exe = real_time_fluid_test
@@ -13,7 +16,7 @@ test_obj_dir = $(build_dir)/obj
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
 src = $(wildcard $(src_dir)/*.cpp)
-obj = $(src:$(src_dir)/%.cpp=$(obj_dir)/%.o) $(obj_dir)/glad.o
+obj = $(src:$(src_dir)/%.cpp=$(obj_dir)/%.o) $(obj_dir)/glad.o $(obj_dir)/particle_dynamics_cuda.o
 test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
 # Paths to includes
 include_paths = $(src_dir) external/glfw/build/include/ external/glad/include/ external/googletest/build/include
@@ -24,13 +27,13 @@ flags = $(foreach dir, $(include_paths), -I$(dir)) -std=c++17 -O3
 debug: flags += -g -DDEBUG
 debug: all
 # Libraries and locations
-ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl
+ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl -L$(NVCC_dir)/lib64 -lcudart
 # Useful variables
 empty =
 test_suffix = _test
 
 .PHONY: all
-all: directories $(bin_dir)/$(exe) $(bin_dir)/$(test_exe)
+all: directories $(bin_dir)/$(exe) #$(bin_dir)/$(test_exe)
 
 # This is purely for testing purposes - allows you to print out anything
 .PHONY: print
@@ -67,3 +70,7 @@ $(obj_dir)/%.o: $(src_dir)/%.cpp
 # Internal source test files
 $(test_obj_dir)/%.o: $(test_dir)/%.cpp
 	$(CXX) $(flags) $(warnings) -o $@ -c $< $(ldlibs)
+
+# CUDA files
+$(obj_dir)/particle_dynamics_cuda.o: $(src_dir)/particle_dynamics_cuda.cu
+	$(NVCC) -o $@ -c $< $(flags)

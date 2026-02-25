@@ -1,8 +1,6 @@
 #include "particle_dynamics.h"
 #include "defines.h"
 
-#include </usr/include/boost/numeric/odeint/stepper/runge_kutta_dopri5.hpp>
-
 #include <cmath>
 #include <stdio.h>
 #include <stdlib.h>

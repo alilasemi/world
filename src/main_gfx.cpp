@@ -6,6 +6,8 @@
 #include "particle_dynamics.h"
 #include "particle_drawer.h"
 
+#include "particle_dynamics_cuda.cu"
+
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -19,7 +21,10 @@ void processInput(GLFWwindow *window);
 
 int main() {
     // GLFW initialization
-    glfwInit();
+    if (!glfwInit()) {
+        std::cout << "Failed to initialize GLFW" << std::endl;
+        return -1;
+    }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -50,9 +55,9 @@ int main() {
 
 
     // Set up simulation
-    ParticleDynamics sim;
-    sim.initialize_to_cube(-.9, -.9);
-    SemiImplicitEuler<ParticleDynamics> integrator(sim, 0.01f);
+    ParticleDynamicsCUDA sim;
+//    sim.initialize_to_cube(-.9, -.9);
+//    SemiImplicitEuler<ParticleDynamics> integrator(sim, 0.01f);
 //    DormandPrince<ParticleDynamics> integrator(sim, 0.01f);
 
     // Set up particle drawer
@@ -129,8 +134,8 @@ int main() {
         glfwPollEvents();
 
         // Advance the simulation
-        for (int steps = 0; steps < 20; ++steps) {
-            integrator.take_step();
+        for (int steps = 0; steps < 2; ++steps) {
+            sim.take_step();
         }
         sim.unpack_state();
         drawer.draw(sim.xx, sim.xy);
