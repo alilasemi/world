@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 # Compiler
 CXX = g++
-NVCC_dir = /usr/local/cuda-13.1/
-NVCC = $(NVCC_dir)/bin/nvcc
+cuda_dir = /usr/local/cuda-13.0/
+NVCC = $(cuda_dir)/bin/nvcc
 # Executable names
 exe = real_time_fluid
 test_exe = real_time_fluid_test
@@ -27,7 +27,7 @@ flags = $(foreach dir, $(include_paths), -I$(dir)) -std=c++17 -O3
 debug: flags += -g -DDEBUG
 debug: all
 # Libraries and locations
-ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl -L$(NVCC_dir)/lib64 -lcudart
+ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl -L$(cuda_dir)/lib64 -lcudart
 # Useful variables
 empty =
 test_suffix = _test

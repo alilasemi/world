@@ -15,6 +15,7 @@ fi
 # Go here:
 # http://glad.dav1d.de/
 # Select GL version 3.3, Profile = Core
+# Download that .zip file and move it to external/
 
 # GoogleTest
 if false; then
