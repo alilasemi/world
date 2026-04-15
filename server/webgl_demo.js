@@ -142,6 +142,9 @@ function main() {
     // Initialize the GL context
     const gl = canvas.getContext("webgl2");
 
+    var websocketUri = "wss://echo.websocket.org/";
+    const socket = new WebSocket(websocketUri);
+
     // Only continue if WebGL is available and working
     if (gl === null) {
         alert(
