@@ -136,15 +136,49 @@ class ParticleDrawer {
 }
 
 
+class Client {
+    socket;
+    initialized;
+
+    constructor() {
+        // Connect to the websocket server
+        var websocketUri = 'ws://34.125.228.87:8081/';
+        const socket = new WebSocket(websocketUri);
+        socket.binaryType = "arraybuffer";
+
+        // Log messages from server
+        socket.onmessage = function(event) {
+            if (!this.initialized) {
+                console.log('Initializing from server:', event.data);
+                // The data is just an int passed as binary, read it into an int
+                const dataView = new DataView(event.data);
+                const n = dataView.getInt32(0, true);
+                console.log('Received n from server: ', n);
+            }
+        };
+
+        // Log errors
+        socket.onerror = function(error) {
+            console.error('WebSocket Error:', error);
+        };
+
+        // Log open connection
+        socket.onopen = function(event) {
+            console.log('Connected to ws://localhost:9001');
+            // Optional: Send a test message
+            socket.send('initialize');
+        };
+        this.socket = socket;
+    }
+}
+
 
 function main() {
+    const client = new Client();
+
     const canvas = document.querySelector("#gl-canvas");
     // Initialize the GL context
     const gl = canvas.getContext("webgl2");
-
-    var websocketUri = "wss://echo.websocket.org/";
-    const socket = new WebSocket(websocketUri);
-
     // Only continue if WebGL is available and working
     if (gl === null) {
         alert(
@@ -156,7 +190,7 @@ function main() {
     // Create shader
     var shader = new Shader(gl, "vertex.glsl", "fragment.glsl");
 
-    // Set up particled drawer
+    // Set up particle drawer
     var xx = [0.0, 0.5, -0.5];
     var xy = [0.0, 0.5, -0.5];
     const n = xx.length;
@@ -192,58 +226,7 @@ function main() {
 
     var colors = new Float32Array(drawer.node_coords.length).fill(1.0);
 
-//    // Render loop
-//    std::vector<float> colors(drawer.node_coords.size());
-//    int frame_count = 0;
-//    while (!glfwWindowShouldClose(window)) {
-//        // Receive user input
-//        processInput(window);
-//
-////        // Update vertex colors based on simulation density
-////        for (int i = 0; i < N + 2; i++) {
-////            for (int j = 0; j < N + 2; j++) {
-////                float normalized_rho = sim.rho[IX(i,j)] / max_rho;
-////                if (normalized_rho < 0.f) normalized_rho = 0.f;
-////                if (normalized_rho > 1.f) normalized_rho = 1.f;
-////                std::vector<float> rgb = color_map.get_color(normalized_rho);
-////                colors[IX(i,j)*3]     = rgb[0]; // Red channel
-////                colors[IX(i,j)*3 + 1] = rgb[1]; // Green channel
-////                colors[IX(i,j)*3 + 2] = rgb[2]; // Blue channel
-////            }
-////        }
-//
-//        // Update vertex positions
-//        glBindBuffer(GL_ARRAY_BUFFER, VBO_nodes);
-//        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(drawer.node_coords.size() * sizeof(float)), drawer.node_coords.data(), GL_STATIC_DRAW);
-//
-//        // Update vertex colors
-//        std::fill(colors.begin(), colors.end(), 1.f); // Set all vertices to white for now
-//        glBindBuffer(GL_ARRAY_BUFFER, VBO_color);
-//        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(colors.size() * sizeof(float)), colors.data(), GL_DYNAMIC_DRAW);
-//
-//        // Render background
-//        glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
-//        glClear(GL_COLOR_BUFFER_BIT);
-//
-//        // Render the fluid
-//        shader.use();
-//        glBindVertexArray(VAO);
-//        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(drawer.triangles.size() * sizeof(int)), GL_UNSIGNED_INT, 0);
-//
-//        // GLFW: swap buffers and poll user inputs
-//        glfwSwapBuffers(window);
-//        glfwPollEvents();
-//
-//        // Advance the simulation
-//        for (int steps = 0; steps < 2; ++steps) {
-//            sim.take_step();
-//        }
-//        sim.unpack_state();
-//        drawer.draw(sim.xx, sim.xy);
-//        ++frame_count;
-//    }
 
-// Convert the above render loop from C++ to JavaScript
     // Render loop
     function render() {
         // Update vertex positions
