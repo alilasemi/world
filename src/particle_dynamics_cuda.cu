@@ -57,7 +57,6 @@ public:
     int n;
     float dt;
 
-    std::vector<float> xx;
     std::vector<float> xy;
     float* state;
     float* rhs;
@@ -86,8 +85,7 @@ public:
 
     void resize(const int new_n) {
         n = new_n;
-        xx = std::vector<float>(n);
-        xy = std::vector<float>(n);
+        xy = std::vector<float>(2*n);
         state = (float*)malloc(4 * n * sizeof(float));
         rhs = (float*)malloc(4 * n * sizeof(float));
         material = (int*)malloc(n * sizeof(int));
@@ -98,10 +96,8 @@ public:
         printf("Unpacking state for %d particles...\n", n);
         for (size_t i = 0; i < n; ++i) {
             printf("Particle %zu: state = (%.2f, %.2f, %.2f, %.2f)\n", i, state[4 * i + 0], state[4 * i + 1], state[4 * i + 2], state[4 * i + 3]);
-            xx[0] = 1;
-            printf("hello\n");
-            xx[i] = state[4 * i + 0];
-            xy[i] = state[4 * i + 1];
+            xy[2*i + 0] = state[4 * i + 0];
+            xy[2*i + 1] = state[4 * i + 1];
         }
         printf("Unpacked state for %d particles.\n", n);
     }

@@ -119,43 +119,138 @@ class ParticleDrawer {
         }
     }
 
-    draw(x, y) {
+    draw(xy) {
         for (let i = 0; i < this.n; ++i) {
             const start_index = i * (this.num_triangles + 1);
             for (let i_tri = 0; i_tri < this.num_triangles; ++i_tri) {
                 const angle = i_tri / this.num_triangles * 2.0 * Math.PI;
-                this.node_coords[(start_index + i_tri) * 3 + 0] = x[i] + Math.cos(angle) * this.radius;
-                this.node_coords[(start_index + i_tri) * 3 + 1] = y[i] + Math.sin(angle) * this.radius;
+                this.node_coords[(start_index + i_tri) * 3 + 0] = xy[2*i + 0] + Math.cos(angle) * this.radius;
+                this.node_coords[(start_index + i_tri) * 3 + 1] = xy[2*i + 1] + Math.sin(angle) * this.radius;
                 this.node_coords[(start_index + i_tri) * 3 + 2] = 0.0;
             }
-            this.node_coords[(start_index + this.num_triangles) * 3 + 0] = x[i];
-            this.node_coords[(start_index + this.num_triangles) * 3 + 1] = y[i];
+            this.node_coords[(start_index + this.num_triangles) * 3 + 0] = xy[2*i + 0];
+            this.node_coords[(start_index + this.num_triangles) * 3 + 1] = xy[2*i + 1];
             this.node_coords[(start_index + this.num_triangles) * 3 + 2] = 0.0;
         }
     }
 }
 
 
+class Graphics {
+    gl;
+    VBO_nodes;
+    VBO_color;
+    VAO;
+    EBO;
+    drawer;
+    shader;
+    colors;
+
+    constructor(drawer) {
+        this.drawer = drawer;
+        const canvas = document.querySelector("#gl-canvas");
+        // Initialize the GL context
+        const gl = canvas.getContext("webgl2");
+        this.gl = gl;
+        // Only continue if WebGL is available and working
+        if (gl === null) {
+            alert(
+                "Unable to initialize WebGL. Your browser or machine may not support it.",
+            );
+            return;
+        }
+
+        // Create shader
+        this.shader = new Shader(gl, "vertex.glsl", "fragment.glsl");
+
+        // Set clear color to black, fully opaque
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        // Clear the color buffer with specified clear color
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // Set up vertex buffer objects and configure vertex attributes
+        this.VBO_nodes = gl.createBuffer();
+        this.VBO_color = gl.createBuffer();
+        this.VAO = gl.createVertexArray();
+        this.EBO = gl.createBuffer();
+        // Must bind VAO before setting up VBOs and attribute pointers
+        gl.bindVertexArray(this.VAO);
+
+        // Vertex positions (the buffer data will be updated each frame)
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_nodes);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+        gl.enableVertexAttribArray(0);
+
+        // Vertex colors (the buffer data will be updated each frame)
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_color);
+        gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+        gl.enableVertexAttribArray(1);
+
+        // Element buffer
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.EBO);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Int32Array(this.drawer.triangles), gl.STATIC_DRAW);
+
+        this.colors = new Float32Array(this.drawer.node_coords.length).fill(1.0);
+        // Render loop
+
+//        render();
+//
+//        xx = xx.map(x => x + 0.5);
+//        xy = xy.map(y => y + 0.5);
+//        this.drawer.draw(xx, xy);
+//        render();
+    }
+
+    render() {
+        const gl = this.gl
+
+        // Update vertex positions
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_nodes);
+        gl.bufferData(gl.ARRAY_BUFFER, this.drawer.node_coords, gl.STATIC_DRAW);
+
+        // Update vertex colors
+        this.colors.fill(1.0); // Set all vertices to white for now
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_color);
+        gl.bufferData(gl.ARRAY_BUFFER, this.colors, gl.DYNAMIC_DRAW);
+
+        // Render background
+        gl.clearColor(0.2, 0.2, 0.2, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // Render the particles
+        this.shader.use();
+        gl.bindVertexArray(this.VAO);
+        gl.drawElements(gl.TRIANGLES, this.drawer.triangles.length, gl.UNSIGNED_INT, 0);
+
+    }
+
+    destroy() {
+        // De-allocate and clean up
+        gl.deleteVertexArray(VAO);
+        gl.deleteBuffer(VBO_nodes);
+        gl.deleteBuffer(VBO_color);
+        gl.deleteBuffer(EBO);
+    }
+}
+
+
 class Client {
     socket;
-    initialized;
+    state;
+    n;
+    xy;
+    drawer;
+    graphics;
 
     constructor() {
+        this.state = 0;
         // Connect to the websocket server
-        var websocketUri = 'ws://34.125.228.87:8081/';
+        var websocketUri = 'ws://34.50.188.19:8081/';
         const socket = new WebSocket(websocketUri);
         socket.binaryType = "arraybuffer";
 
         // Log messages from server
-        socket.onmessage = function(event) {
-            if (!this.initialized) {
-                console.log('Initializing from server:', event.data);
-                // The data is just an int passed as binary, read it into an int
-                const dataView = new DataView(event.data);
-                const n = dataView.getInt32(0, true);
-                console.log('Received n from server: ', n);
-            }
-        };
+        socket.onmessage = (event) => this.onmessage(event);
 
         // Log errors
         socket.onerror = function(error) {
@@ -170,99 +265,57 @@ class Client {
         };
         this.socket = socket;
     }
+
+    onmessage(event) {
+        console.log(this.state);
+        if (this.state == 0) {
+            console.log('Initializing from server:', event.data);
+            // Read simulation size
+            const dataView = new DataView(event.data);
+            this.n = dataView.getInt32(0, true);
+            console.log('Received n from server: ', this.n);
+            ++this.state;
+        } else if (this.state == 1) {
+            // Read initial condition
+            const dataView = new DataView(event.data);
+            this.xy = new Float32Array(event.data);
+            console.log('Received initial condition from server: ', this.xy);
+            this.setup();
+            this.socket.send('run');
+            ++this.state;
+        } else {
+            const restartButton = document.getElementById("restartButton");
+            if (restartButton.checked) {
+                this.state = 0;
+                this.socket.send('initialize');
+                restartButton.checked = false;
+            } else {
+                // Read new state
+                const dataView = new DataView(event.data);
+                this.xy.set(new Float32Array(event.data));
+                console.log('Received new state from server: ', this.xy);
+                this.drawer.draw(this.xy);
+                this.graphics.render();
+                this.socket.send('run');
+            }
+        }
+
+    }
+
+    setup() {
+        // Set up particle drawer
+        this.drawer = new ParticleDrawer(this.n, 20);
+        this.drawer.draw(this.xy)
+        // Set up graphics
+        this.graphics = new Graphics(this.drawer);
+        console.log("Initialized graphics");
+        this.graphics.render();
+    }
 }
 
 
 function main() {
     const client = new Client();
-
-    const canvas = document.querySelector("#gl-canvas");
-    // Initialize the GL context
-    const gl = canvas.getContext("webgl2");
-    // Only continue if WebGL is available and working
-    if (gl === null) {
-        alert(
-            "Unable to initialize WebGL. Your browser or machine may not support it.",
-        );
-        return;
-    }
-
-    // Create shader
-    var shader = new Shader(gl, "vertex.glsl", "fragment.glsl");
-
-    // Set up particle drawer
-    var xx = [0.0, 0.5, -0.5];
-    var xy = [0.0, 0.5, -0.5];
-    const n = xx.length;
-    var drawer = new ParticleDrawer(n, 20);
-    drawer.draw(xx, xy);
-
-    // Set clear color to black, fully opaque
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    // Clear the color buffer with specified clear color
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    // Set up vertex buffer objects and configure vertex attributes
-    const VBO_nodes = gl.createBuffer();
-    const VBO_color = gl.createBuffer();
-    const VAO = gl.createVertexArray();
-    const EBO = gl.createBuffer();
-    // Must bind VAO before setting up VBOs and attribute pointers
-    gl.bindVertexArray(VAO);
-
-    // Vertex positions (the buffer data will be updated each frame)
-    gl.bindBuffer(gl.ARRAY_BUFFER, VBO_nodes);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
-    gl.enableVertexAttribArray(0);
-
-    // Vertex colors (the buffer data will be updated each frame)
-    gl.bindBuffer(gl.ARRAY_BUFFER, VBO_color);
-    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
-    gl.enableVertexAttribArray(1);
-
-    // Element buffer
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, EBO);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Int32Array(drawer.triangles), gl.STATIC_DRAW);
-
-    var colors = new Float32Array(drawer.node_coords.length).fill(1.0);
-
-
-    // Render loop
-    function render() {
-        // Update vertex positions
-        gl.bindBuffer(gl.ARRAY_BUFFER, VBO_nodes);
-        gl.bufferData(gl.ARRAY_BUFFER, drawer.node_coords, gl.STATIC_DRAW);
-
-        // Update vertex colors
-        colors.fill(1.0); // Set all vertices to white for now
-        gl.bindBuffer(gl.ARRAY_BUFFER, VBO_color);
-        gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
-
-        // Render background
-        gl.clearColor(0.2, 0.2, 0.2, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
-        // Render the particles
-        shader.use();
-        gl.bindVertexArray(VAO);
-        gl.drawElements(gl.TRIANGLES, drawer.triangles.length, gl.UNSIGNED_INT, 0);
-
-    }
-
-    render();
-
-    xx = xx.map(x => x + 0.5);
-    xy = xy.map(y => y + 0.5);
-    drawer.draw(xx, xy);
-    render();
-
-
-
-    // De-allocate and clean up
-    gl.deleteVertexArray(VAO);
-    gl.deleteBuffer(VBO_nodes);
-    gl.deleteBuffer(VBO_color);
-    gl.deleteBuffer(EBO);
 }
 
 
