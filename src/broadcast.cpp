@@ -1,7 +1,7 @@
 #include "App.h"
 #include <iostream>
 
-#include "particle_dynamics_cuda.cu"
+#include "particle_dynamics_cuda.h"
 
 struct PerSocketData {};
 
@@ -18,7 +18,6 @@ int main() {
             std::cout << "Received message: " << message << std::endl;
             if (opCode == uWS::OpCode::TEXT) {
                 if (message == "initialize") {
-                    sim.initialize_to_two_particles(0.0f, 0.0f);
                     // Send size, needs to be stringview
                     int32_t size = 20;
                     const char* size_data = reinterpret_cast<const char*>(&size);
