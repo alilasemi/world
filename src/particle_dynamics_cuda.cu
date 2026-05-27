@@ -21,7 +21,7 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         const size_t mat = material[i];
 //        // Gravity
         force_y -= mass[mat] * g;
-        printf("Particle %zu: mat=%zu, pos=(%.2f, %.2f), vel=(%.2f, %.2f), force=(%.2f, %.2f)\n",
+        printf("Particle %lu: mat=%lu, pos=(%.2f, %.2f), vel=(%.2f, %.2f), force=(%.2f, %.2f)\n",
                i, mat, x, y, vx, vy, force_x, force_y);
 //        // Floor force
 //        force_y += c_r[mat][0] * powf(1 / (y - floor_y), 4); // Repulsive force
@@ -150,29 +150,74 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 
 
 void ParticleDynamicsCUDA::resize(const int new_n) {
+    cudaError_t err;
     n = new_n;
     xy = std::vector<float>(2*n);
 
     host_state = (float*)malloc(4 * n * sizeof(float));
-    cudaMalloc((void**)&device_state, 4 * n * sizeof(float));
+    err = cudaMalloc((void**)&device_state, 4 * n * sizeof(float));
+    printf("cudaMalloc device_state: %s\n", cudaGetErrorString(err));
+
+cudaPointerAttributes attr;
+err =
+    cudaPointerGetAttributes(&attr, device_state);
+printf("attr err = %s\n",
+       cudaGetErrorString(err));
+printf("type = %d\n", (int)attr.type);
 
     host_rhs = (float*)malloc(4 * n * sizeof(float));
-    cudaMalloc((void**)&device_rhs, 4 * n * sizeof(float));
+    err = cudaMalloc((void**)&device_rhs, 4 * n * sizeof(float));
+    printf("cudaMalloc device_rhs: %s\n", cudaGetErrorString(err));
 
     host_material = (int*)malloc(n * sizeof(int));
-    cudaMalloc((void**)&device_material, n * sizeof(int));
+    err = cudaMalloc((void**)&device_material, n * sizeof(int));
+    printf("cudaMalloc device_material: %s\n", cudaGetErrorString(err));
 }
 
 
 void ParticleDynamicsCUDA::unpack_state() {
-    cudaMemcpy(host_state, device_state, 4 * n * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaError_t err;
+
+    err = cudaDeviceSynchronize();
+    printf("kernel: %s\n", cudaGetErrorString(err));
+
+printf("host_state = %p\n", host_state);
+printf("device_state = %p\n", device_state);
+
+
+cudaGetLastError(); // clear old errors
+
+cudaPointerAttributes attr;
+err =
+    cudaPointerGetAttributes(&attr, device_state);
+printf("attr err = %s\n",
+       cudaGetErrorString(err));
+printf("type = %d\n", (int)attr.type);
+
+printf("bytes = %llu\n",
+       (unsigned long long)(4 * n * sizeof(float)));
+    err = cudaMemcpy(host_state, device_state, 4 * n * sizeof(float), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        printf("Memcpy failed: %s\n",
+               cudaGetErrorString(err));
+        exit(1);
+    }
+
     printf("Unpacking state for %d particles...\n", n);
     for (size_t i = 0; i < n; ++i) {
-        printf("Particle %zu: host_state = (%.2f, %.2f, %.2f, %.2f)\n", i, host_state[4 * i + 0], host_state[4 * i + 1], host_state[4 * i + 2], host_state[4 * i + 3]);
+        printf("Particle %lu: host_state = (%.2f, %.2f, %.2f, %.2f)\n", i, host_state[4 * i + 0], host_state[4 * i + 1], host_state[4 * i + 2], host_state[4 * i + 3]);
         xy[2*i + 0] = host_state[4 * i + 0];
         xy[2*i + 1] = host_state[4 * i + 1];
     }
     printf("Unpacked state for %d particles.\n", n);
+
+
+    printf("after unpack\n");
+err =
+    cudaPointerGetAttributes(&attr, device_state);
+printf("attr err = %s\n",
+       cudaGetErrorString(err));
+printf("type = %d\n", (int)attr.type);
 }
 
 
@@ -225,11 +270,31 @@ void ParticleDynamicsCUDA::initialize_to_cube(const float x0, const float y0) {
         host_material[i] = 1;
     }
     host_material[n - 1] = 2;
+
+    cudaError_t err;
+
+    printf("in init cube\n");
+cudaPointerAttributes attr;
+err =
+    cudaPointerGetAttributes(&attr, device_state);
+printf("attr err = %s\n",
+       cudaGetErrorString(err));
+printf("type = %d\n", (int)attr.type);
 }
 
 
 void ParticleDynamicsCUDA::take_step() {
     cudaError_t err;
+
+    printf("in take step\n");
+cudaPointerAttributes attr;
+err =
+    cudaPointerGetAttributes(&attr, device_state);
+printf("attr err = %s\n",
+       cudaGetErrorString(err));
+printf("type = %d\n", (int)attr.type);
+
+
     update_grid_kernel<<<1,1>>>(device_grid, device_state, n, grid_size);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
@@ -251,6 +316,13 @@ void ParticleDynamicsCUDA::take_step() {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
     printf("took step\n");
+
+    printf("Now type is:\n");
+err =
+    cudaPointerGetAttributes(&attr, device_state);
+printf("attr err = %s\n",
+       cudaGetErrorString(err));
+printf("type = %d\n", (int)attr.type);
 }
 
 ParticleDynamicsCUDA::~ParticleDynamicsCUDA() {

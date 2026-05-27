@@ -35,4 +35,9 @@ public:
     void take_step();
 
     ~ParticleDynamicsCUDA();
+
+    // Prevent copying and assignment. It's error prone since CPU code can copy
+    // these device pointers and cause problems.
+    ParticleDynamicsCUDA(const ParticleDynamicsCUDA&) = delete;
+    ParticleDynamicsCUDA& operator=(const ParticleDynamicsCUDA&) = delete;
 };

@@ -15,12 +15,15 @@ public:
     void initialize_to_two_particles(const float x0, const float y0);
     void initialize_to_cube(const float x0, const float y0);
 
-    Vector xx;
+    void take_step();
+
     Vector xy;
     size_t n;
 
     std::vector<float> state;
+    std::vector<float> rhs;
     float time;
+    float dt;
 
 private:
     void resize(const size_t new_n);

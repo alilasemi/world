@@ -8,7 +8,7 @@
 
 ParticleDynamics::ParticleDynamics() {
     // By default, initialize to one particle
-    initialize_to_one_particle(0.0f, 0.0f);
+    initialize_to_cube(0.0f, 0.0f);
     time = 0.0f;
     // I will assign material 0 to be the walls, material 1 to be the snow, and
     // material 2 to be the sled
@@ -42,6 +42,8 @@ ParticleDynamics::ParticleDynamics() {
     c_d[2][1] = 0.025f;
     c_d[2][2] = 0.025f;
 
+    dt = 0.001f;
+
     size_t grid_size = 16;
     grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
 }
@@ -49,9 +51,9 @@ ParticleDynamics::ParticleDynamics() {
 
 void ParticleDynamics::resize(const size_t new_n) {
     n = new_n;
-    xx = Vector(n);
-    xy = Vector(n);
+    xy = Vector(2*n);
     state = std::vector<float>(4 * n);
+    rhs = std::vector<float>(4 * n);
     material = std::vector<size_t>(n);
 }
 
@@ -63,6 +65,8 @@ void ParticleDynamics::initialize_to_one_particle(const float x0, const float y0
     state[1] = y0;
     state[2] = 0.0f;
     state[3] = 0.0f;
+
+    material = std::vector<size_t>(n, 1);
 
     unpack_state();
 }
@@ -80,6 +84,8 @@ void ParticleDynamics::initialize_to_two_particles(const float x0, const float y
     state[5] = y0 + 0.1f;
     state[6] = 0.0f;
     state[7] = 0.0f;
+
+    material = std::vector<size_t>(n, 1);
 
     unpack_state();
 }
@@ -109,7 +115,6 @@ void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
     material[n - 1] = 2;
 
     unpack_state();
-    update_grid();
 }
 
 
@@ -131,8 +136,6 @@ void ParticleDynamics::update_grid() {
 
 
 void ParticleDynamics::compute_rhs(std::vector<float>& rhs, const std::vector<float>& u, const float t) {
-    update_grid();
-
     const float g = 9.81f;
     float floor_y = -1.0f;
     float wall_x = -1.0f;
@@ -155,10 +158,10 @@ void ParticleDynamics::compute_rhs(std::vector<float>& rhs, const std::vector<fl
         force = fmax(0, fmin(max_force, max_force / (r0 - r1) * (y - floor_y - r1)));
         force_y += force; // Repulsive force
         force_y -= force * vy; // Damping based on velocity
-        // Wall on the left (at -1)
-        force = fmax(0, fmin(max_force, max_force / (r0 - r1) * (x - wall_x - r1)));
-        force_x += force; // Repulsive force
-        force_x -= force * vx; // Damping based on velocity
+//        // Wall on the left (at -1)
+//        force = fmax(0, fmin(max_force, max_force / (r0 - r1) * (x - wall_x - r1)));
+//        force_x += force; // Repulsive force
+//        force_x -= force * vx; // Damping based on velocity
 
 
         int grid_size = static_cast<int>(grid.size());
@@ -245,7 +248,42 @@ void ParticleDynamics::compute_jacobian(std::vector<float>& rhs, const std::vect
 
 void ParticleDynamics::unpack_state() {
     for (size_t i = 0; i < n; ++i) {
-        xx[i] = state[4 * i + 0];
-        xy[i] = state[4 * i + 1];
+        xy[2*i + 0] = state[4 * i + 0];
+        xy[2*i + 1] = state[4 * i + 1];
     }
+}
+
+
+void ParticleDynamics::take_step() {
+    std::cout << "Taking step with dt = " << dt << std::endl;
+    std::cout << "Current state: ";
+    std::cout << state[0] << " " << state[1] << " " << state[2] << " " << state[3] << std::endl;
+    update_grid();
+
+    compute_rhs(rhs, state, time);
+
+    std::cout << state[0] << " " << state[1] << " " << state[2] << " " << state[3] << std::endl;
+    std::cout << rhs[0] << " " << rhs[1] << " " << rhs[2] << " " << rhs[3] << std::endl;
+
+    // Update velocities
+    for (size_t i = 0; i < n; ++i) {
+        state[4*i + 2] += dt * rhs[4*i + 2];
+        state[4*i + 3] += dt * rhs[4*i + 3];
+    }
+    // Then, update positions using the new velocities
+    for (size_t i = 0; i < n; ++i) {
+        state[4*i + 0] += dt * state[4*i + 2];
+        state[4*i + 1] += dt * state[4*i + 3];
+    }
+    time += dt;
+    printf("t = %.3f: \n", time);
+    for (size_t dof = 0; dof < 4*n; ++dof) {
+        printf("%.2f ", state[dof]);
+    }
+    printf("\n");
+
+//    // I want the dt to be .001 when y (aka state[1]) is around -1,
+//    // and .01 when y is around 0
+//    dt = 0.01f * (1 + system.state[1]) - 0.001f * system.state[1];
+    dt = 0.001f;
 }
