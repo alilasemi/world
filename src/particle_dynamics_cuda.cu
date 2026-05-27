@@ -1,9 +1,11 @@
 #include <stdio.h>
+#include <assert.h>
 #include "particle_dynamics_cuda.h"
 
 
 __global__ void compute_rhs_kernel(const float* state, const int* material,
-        const float* mass, float* rhs, const int* grid, size_t n, int grid_size) {
+        const float* mass, float* rhs, const int* grid, size_t n, int grid_size,
+        int particles_per_cell) {
     printf("ff\n");
     const float g = 9.81f;
     float floor_y = -1.0f;
@@ -36,28 +38,32 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
         int cell_x = min(grid_size - 1, max(0, static_cast<int>((x + 1.0f) / 2.0f * grid_size)));
         int cell_y = min(grid_size - 1, max(0, static_cast<int>((y + 1.0f) / 2.0f * grid_size)));
-        for (int dx = -3; dx <= 3; ++dx) {
-            for (int dy = -3; dy <= 3; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
                 int neighbor_cell_x = cell_x + dx;
                 int neighbor_cell_y = cell_y + dy;
                 if (neighbor_cell_x >= 0 && neighbor_cell_x < grid_size && neighbor_cell_y >= 0 && neighbor_cell_y < grid_size) {
-                    int j = grid[cell_x * grid_size + cell_y];
-                    if (i != j) {
-                        const float x_j = state[4 * j + 0];
-                        const float y_j = state[4 * j + 1];
-                        const float vx_j = state[4 * j + 2];
-                        const float vy_j = state[4 * j + 3];
-                        const float dx = x - x_j;
-                        const float dy = y - y_j;
-                        const float dist = sqrtf(dx * dx + dy * dy);
-                        const size_t mat_j = material[j];
-                        // Repulsive force
-                        float force = max(0.f, min(max_force, max_force / (r0 - r1) * (dist - r1)));
-                        force_y += force * (dy / dist);
-                        force_x += force * (dx / dist);
-                        // Damping based on relative velocity
-                        force_x -= force * (vx - vx_j);
-                        force_y -= force * (vy - vy_j);
+                    int index = neighbor_cell_x * grid_size * particles_per_cell + neighbor_cell_y * particles_per_cell;
+                    int count = grid[index];
+                    for (int particle_idx = 0; particle_idx < count; ++particle_idx) {
+                        int j = grid[index + 1 + particle_idx];
+                        if (i != j) {
+                            const float x_j = state[4 * j + 0];
+                            const float y_j = state[4 * j + 1];
+                            const float vx_j = state[4 * j + 2];
+                            const float vy_j = state[4 * j + 3];
+                            const float dx = x - x_j;
+                            const float dy = y - y_j;
+                            const float dist = sqrtf(dx * dx + dy * dy);
+                            const size_t mat_j = material[j];
+                            // Repulsive force
+                            float force = max(0.f, min(max_force, max_force / (r0 - r1) * (dist - r1)));
+                            force_y += force * (dy / dist);
+                            force_x += force * (dx / dist);
+                            // Damping based on relative velocity
+                            force_x -= force * (vx - vx_j);
+                            force_y -= force * (vy - vy_j);
+                        }
                     }
                 }
             }
@@ -98,14 +104,28 @@ __global__ void take_step_kernel(float* state, const float* rhs, size_t n, float
     dt = 0.001f;
 }
 
-__global__ void update_grid_kernel(int* grid, const float* state, size_t n, int grid_size) {
-    printf("gg\n");
+__global__ void update_grid_kernel(int* grid, const float* state, size_t n, int
+        grid_size, int particles_per_cell) {
+    // Let the first "particle" position actually be the count of particles in
+    // this cell. Initialize to zero
     for (size_t i = 0; i < n; ++i) {
         int cell_x = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 0] + 1.0f) / 2.0f * grid_size)));
         int cell_y = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 1] + 1.0f) / 2.0f * grid_size)));
-        // Add particle i to the appropriate cell in the grid
-        grid[cell_x * grid_size + cell_y] = i; // This assumes one particle per
-                                               // cell TODO
+        grid[cell_x * grid_size * particles_per_cell + cell_y * particles_per_cell] = 0;
+    }
+    // Then, loop over particles and add them to the grid
+    for (size_t i = 0; i < n; ++i) {
+        int cell_x = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 0] + 1.0f) / 2.0f * grid_size)));
+        int cell_y = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 1] + 1.0f) / 2.0f * grid_size)));
+        int index = cell_x * grid_size * particles_per_cell + cell_y * particles_per_cell;
+        grid[index] += 1; // Increment count of particles in this cell
+        if (grid[index] < particles_per_cell) {
+            grid[index + grid[index]] = i; // Store particle index
+        } else {
+            // Handle overflow (too many particles in this cell)
+            printf("Error: too many particles in cell (%d, %d)\n", cell_x, cell_y);
+            assert(false);
+        }
     }
 }
 
@@ -128,8 +148,9 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     unpack_state();
 
     // Create grid
-    grid_size = 10;
-    cudaMalloc((void**)&device_grid, grid_size * grid_size * sizeof(int*));
+    grid_size = 16;
+    particles_per_cell = 10;
+    cudaMalloc((void**)&device_grid, grid_size * grid_size * particles_per_cell * sizeof(int*));
 
     time = 0.0f;
     // I will assign material 0 to be the walls, material 1 to be the snow, and
@@ -295,7 +316,8 @@ printf("attr err = %s\n",
 printf("type = %d\n", (int)attr.type);
 
 
-    update_grid_kernel<<<1,1>>>(device_grid, device_state, n, grid_size);
+    update_grid_kernel<<<1,1>>>(device_grid, device_state, n, grid_size,
+            particles_per_cell);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
@@ -303,7 +325,7 @@ printf("type = %d\n", (int)attr.type);
     printf("Updated grid for %d particles.\n", n);
 
     compute_rhs_kernel<<<1,1>>>(device_state, device_material,
-            device_mass, device_rhs, device_grid, n, grid_size);
+            device_mass, device_rhs, device_grid, n, grid_size, particles_per_cell);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));

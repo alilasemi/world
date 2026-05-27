@@ -6,6 +6,7 @@ public:
     int n;
     float dt;
     int grid_size;
+    int particles_per_cell;
 
     std::vector<float> xy;
 
