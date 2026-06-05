@@ -241,11 +241,17 @@ class Client {
     xy;
     drawer;
     graphics;
+    mode;
+    ip;
 
-    constructor() {
+    constructor(mode, ip) {
         this.state = 0;
+        this.mode = mode;
+        this.ip = ip;
+
         // Connect to the websocket server
-        var websocketUri = 'ws://localhost:8081';
+        console.log("Running in " + mode + " mode.");
+        const websocketUri = 'ws://' + ip + ':8081';
         const socket = new WebSocket(websocketUri);
         socket.binaryType = "arraybuffer";
 
@@ -259,7 +265,7 @@ class Client {
 
         // Log open connection
         socket.onopen = function(event) {
-            console.log('Connected to ws://localhost:9001');
+            console.log('Connected to WebSocket server at ' + websocketUri);
             // Optional: Send a test message
             socket.send('initialize');
         };
@@ -314,9 +320,10 @@ class Client {
 }
 
 
-function main() {
-    const client = new Client();
+function main(mode, ip) {
+    const client = new Client(mode, ip);
 }
 
+const config = await (await fetch('/config')).json();
 
-main();
+main(config.mode, config.ip);

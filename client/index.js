@@ -16,6 +16,30 @@ const app = express();
 // This allows using the HTML file that sets up the canvas for WebGL
 app.use(express.static(root));
 
+// Command line argument
+const mode = process.argv[2] || 'gcloud';
+
+// Get the server's IP. If running locally, use localhost. Otherwise, get the
+// external IP of the gcloud instance.
+var ip;
+if (mode === 'local') {
+    ip = 'localhost';
+} else if (mode === 'gcloud') {
+    const response = await fetch('https://api.ipify.org');
+    ip = await response.text();
+} else {
+    console.error(`Unknown mode: ${mode}`);
+    process.exit(1);
+}
+
+app.get('/config', (req, res) => {
+    res.json({
+        mode: mode,
+        ip: ip,
+    });
+});
+console.log(`Running in ${mode} mode, server IP is ${ip}`);
+
 // Allow CORS for all routes (for development purposes)
 app.use(cors());
 app.get('/vertex.glsl', (req, res) => {
