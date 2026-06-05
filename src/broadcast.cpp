@@ -1,5 +1,6 @@
 #include "App.h"
 #include <iostream>
+using std::unique_ptr;
 
 #include "particle_dynamics_cuda.h"
 #include "particle_dynamics.h"
@@ -9,8 +10,8 @@ struct PerSocketData {};
 int main() {
 
     // Set up simulation
-    using SimType = ParticleDynamicsCUDA;
-    SimType* sim;
+    using SimType = ParticleDynamics;
+    unique_ptr<SimType> sim;
 
     auto app = uWS::App();
     app.ws<PerSocketData>("/*", {
@@ -20,8 +21,8 @@ int main() {
             std::cout << "Received message: " << message << std::endl;
             if (opCode == uWS::OpCode::TEXT) {
                 if (message == "initialize") {
-                    if (sim) delete sim;
-                    sim = new SimType();
+                    sim.reset();
+                    sim = std::make_unique<SimType>();
                     // Send size, needs to be stringview
                     int32_t size = sim->n;
                     const char* size_data = reinterpret_cast<const char*>(&size);

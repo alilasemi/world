@@ -287,3 +287,56 @@ void ParticleDynamics::take_step() {
 //    dt = 0.01f * (1 + system.state[1]) - 0.001f * system.state[1];
     dt = 0.001f;
 }
+
+
+float distance_between_two_points(
+        const float x0, const float y0,
+        const float x1, const float y1) {
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    return sqrtf(dx * dx + dy * dy);
+}
+
+// The point is at (x0, y0).
+// The line goes from (x1, y1) to (x2, y2).
+float distance_between_point_and_line(
+        const float x0, const float y0,
+        const float x1, const float y1,
+        const float x2, const float y2) {
+    // Vector from 1 to 0
+    float u0 = x0 - x1;
+    float u1 = y0 - y1;
+    // Vector along the line
+    float v0 = x2 - x1;
+    float v1 = y2 - y1;
+    float v_norm = sqrtf(v0*v0 + v1*v1);
+    // Component of u along the line
+    float component = u0*v0 + u1*v1;
+    // If it's negative, the particle is behind the line, so the closest point
+    // is 0 to 1
+    if (component < 0) {
+        return distance_between_two_points(x0, y0, x1, y1);
+    // If it's positive but less than the length of v, then the closest point is
+    // on the line, so take the projection distance
+    } else if (component < v_norm) {
+        // w is the vector from to the projected point on the line. This is u
+        // minus the component along the line.
+        float w0 = u0 - component * v0 / v_norm;
+        float w1 = u1 - component * v1 / v_norm;
+        return sqrtf(w0*w0 + w1*w1);
+    // Otherwise, it is beyond the line, so the closest point is 0 to 2
+    } else {
+        return distance_between_two_points(x0, y0, x2, y2);
+    }
+
+}
+
+// The particle is at (x0, y0) and has radius r0.
+// The rod goes from (x1, y1) to (x2, y2) and has radius r1.
+float distance_between_particle_and_rod(
+        const float x0, const float y0,
+        const float x1, const float y1,
+        const float x2, const float y2,
+        const float r0, const float r1) {
+    return distance_between_point_and_line(x0, y0, x1, y1, x2, y2) - r0 - r1;
+}

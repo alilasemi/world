@@ -245,7 +245,7 @@ class Client {
     constructor() {
         this.state = 0;
         // Connect to the websocket server
-        var websocketUri = 'ws://34.186.18.200:8081';
+        var websocketUri = 'ws://localhost:8081';
         const socket = new WebSocket(websocketUri);
         socket.binaryType = "arraybuffer";
 
