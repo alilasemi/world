@@ -4,24 +4,27 @@ CXX = g++
 cuda_dir = /usr/local/cuda-13.0/
 NVCC = $(cuda_dir)/bin/nvcc
 # Executable names
-exe = real_time_fluid
-exe_cpu = real_time_fluid_cpu
-test_exe = real_time_fluid_test
+exe = world
+exe_cpu = world_cpu
+test_exe = world_test
+profile_exe = world_profile
 # Directories
 src_dir = src
 build_dir = build
 bin_dir = $(build_dir)/bin
 test_dir = test
-obj_dir = $(build_dir)/obj
+obj_dir = $(build_dir)/obj/
 test_obj_dir = $(build_dir)/obj
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
 src = $(wildcard $(src_dir)/*.cpp)
-obj = $(src:$(src_dir)/%.cpp=$(obj_dir)/%.o) $(obj_dir)/glad.o
+obj = $(obj_dir)dormand_prince.o $(obj_dir)particle_dynamics.o $(obj_dir)semi_implicit_euler.o $(obj_dir)color_map.o $(obj_dir)particle_drawer.o $(obj_dir)/glad.o
 cuda_obj = $(obj_dir)/particle_dynamics_cuda.o
 test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
+profile_obj = $(obj_dir)/profiling_sim.o
+main_obj = $(obj_dir)/broadcast.o
 # Paths to includes
-include_paths = $(src_dir) external/glfw/build/include/ external/glad/include/ external/googletest/build/include /home/ali/projects/real-time-particles/uWebSockets/src/ /home/ali/projects/real-time-particles/uWebSockets/uSockets/src/
+include_paths = $(src_dir) external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/
 # Warnings
 warnings = -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wreorder
 # Compiler flags
@@ -29,7 +32,7 @@ flags = $(foreach dir, $(include_paths), -I$(dir)) -std=c++17 -O3
 debug: flags += -g -DDEBUG
 debug: all
 # Libraries and locations
-ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl /home/ali/projects/real-time-particles/uWebSockets/uSockets/uSockets.a -lz -lssl -lcrypto -lpthread
+ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl external/uWebSockets/uSockets/uSockets.a -lz -lssl -lcrypto -lpthread
 cuda_ldlibs = -L$(cuda_dir)/lib64 -lcudart
 # Useful variables
 empty =
@@ -37,6 +40,9 @@ test_suffix = _test
 
 .PHONY: all
 all: directories $(bin_dir)/$(exe) #$(bin_dir)/$(test_exe)
+
+.PHONY: profile
+profile: directories $(bin_dir)/$(exe_profile) #$(bin_dir)/$(test_exe)
 
 .PHONY: cpu
 cpu: directories $(bin_dir)/$(exe_cpu) #$(bin_dir)/$(test_exe)
@@ -58,10 +64,13 @@ clean:
 	rm -rf $(build_dir)
 
 # -- Executables --#
-$(bin_dir)/$(exe): $(obj) $(cuda_obj)
-	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
+$(bin_dir)/$(exe): $(main_obj) $(obj) $(cuda_obj)
+	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
-$(bin_dir)/$(exe_cpu): $(obj)
+$(bin_dir)/$(exe_profile): $(profile_obj) $(obj) $(cuda_obj)
+	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+
+$(bin_dir)/$(exe_cpu): $(main_obj) $(obj)
 	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
 
 $(bin_dir)/$(test_exe): $(test_obj) $(filter-out $(obj_dir)/main_gfx.o, $(obj))
@@ -82,4 +91,4 @@ $(test_obj_dir)/%.o: $(test_dir)/%.cpp
 
 # CUDA files
 $(obj_dir)/particle_dynamics_cuda.o: $(src_dir)/particle_dynamics_cuda.cu
-	$(NVCC) $(flags) -o $@ -c $< $(ldlibs) $(cuda_ldlibs)
+	$(NVCC) $(flags) -o $@ -c $<

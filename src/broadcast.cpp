@@ -10,7 +10,7 @@ struct PerSocketData {};
 int main() {
 
     // Set up simulation
-    using SimType = ParticleDynamics;
+    using SimType = ParticleDynamicsCUDA;
     unique_ptr<SimType> sim;
 
     auto app = uWS::App();

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
+#include <nvtx3/nvToolsExt.h>
 #include "particle_dynamics_cuda.h"
 
 
@@ -304,7 +305,12 @@ printf("type = %d\n", (int)attr.type);
 }
 
 
+__global__ void k() {
+    printf("hello\n");
+}
+
 void ParticleDynamicsCUDA::take_step() {
+    nvtxRangePush("simulation step");
     cudaError_t err;
 
     printf("in take step\n");
@@ -345,6 +351,12 @@ err =
 printf("attr err = %s\n",
        cudaGetErrorString(err));
 printf("type = %d\n", (int)attr.type);
+    nvtxRangePop();
+
+    nvtxRangePush("force_cuda");
+    k<<<1,1>>>();
+    cudaDeviceSynchronize();
+    nvtxRangePop();
 }
 
 ParticleDynamicsCUDA::~ParticleDynamicsCUDA() {
