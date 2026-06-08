@@ -6,13 +6,16 @@
 __global__ void compute_rhs_kernel(const float* state, const int* material,
         const float* mass, float* rhs, const int* grid, size_t n, int grid_size,
         int particles_per_cell) {
+    int index = threadIdx.x;
+    int stride = blockDim.x;
+
     const float g = 9.81f;
     float floor_y = -1.0f;
     float wall_x = -1.0f;
     float max_force = 1000.f;
     float r0 = 0.05f;
     float r1 = 0.1f;
-    for (size_t i = 0; i < n; ++i) {
+    for (int i = index; i < n; i += stride) {
         const float x = state[4 * i + 0];
         const float y = state[4 * i + 1];
         const float vx = state[4 * i + 2];
@@ -315,7 +318,7 @@ void ParticleDynamicsCUDA::take_step() {
     stop_timer(time_update_grid);
 
     start_timer();
-    compute_rhs_kernel<<<1,1>>>(device_state, device_material,
+    compute_rhs_kernel<<<1,256>>>(device_state, device_material,
             device_mass, device_rhs, device_grid, n, grid_size, particles_per_cell);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
