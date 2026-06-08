@@ -6,25 +6,30 @@ NVCC = $(cuda_dir)/bin/nvcc
 # Executable names
 exe = world
 exe_cpu = world_cpu
-test_exe = world_test
-profile_exe = world_profile
+test_exe = test
+exe_profile = profile
 # Directories
 src_dir = src
 build_dir = build
 bin_dir = $(build_dir)/bin
 test_dir = test
-obj_dir = $(build_dir)/obj/
+obj_dir = $(build_dir)/obj
 test_obj_dir = $(build_dir)/obj
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
-src = $(wildcard $(src_dir)/*.cpp)
-obj = $(obj_dir)dormand_prince.o $(obj_dir)particle_dynamics.o $(obj_dir)semi_implicit_euler.o $(obj_dir)color_map.o $(obj_dir)particle_drawer.o $(obj_dir)/glad.o
+list_of_src_files = dormand_prince particle_dynamics semi_implicit_euler color_map particle_drawer
+# prepend with obj dir and postpend with .o
+obj = $(addprefix $(obj_dir)/, $(list_of_src_files))
+obj := $(addsuffix .o, $(obj))
+# Add glad.o as well
+obj += $(obj_dir)/glad.o
+
 cuda_obj = $(obj_dir)/particle_dynamics_cuda.o
 test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
 profile_obj = $(obj_dir)/profiling_sim.o
 main_obj = $(obj_dir)/broadcast.o
 # Paths to includes
-include_paths = $(src_dir) external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/
+include_paths = $(src_dir) $(cuda_dir)/include external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/
 # Warnings
 warnings = -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wreorder
 # Compiler flags
@@ -50,7 +55,7 @@ cpu: directories $(bin_dir)/$(exe_cpu) #$(bin_dir)/$(test_exe)
 # This is purely for testing purposes - allows you to print out anything
 .PHONY: print
 print:
-	$(info $(test_obj))
+	$(info $(obj))
 
 .PHONY: directories
 directories:
@@ -62,19 +67,6 @@ directories:
 .PHONY: clean
 clean:
 	rm -rf $(build_dir)
-
-# -- Executables --#
-$(bin_dir)/$(exe): $(main_obj) $(obj) $(cuda_obj)
-	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
-
-$(bin_dir)/$(exe_profile): $(profile_obj) $(obj) $(cuda_obj)
-	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
-
-$(bin_dir)/$(exe_cpu): $(main_obj) $(obj)
-	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
-
-$(bin_dir)/$(test_exe): $(test_obj) $(filter-out $(obj_dir)/main_gfx.o, $(obj))
-	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
 
 # -- Objects -- #
 # GLAD
@@ -92,3 +84,17 @@ $(test_obj_dir)/%.o: $(test_dir)/%.cpp
 # CUDA files
 $(obj_dir)/particle_dynamics_cuda.o: $(src_dir)/particle_dynamics_cuda.cu
 	$(NVCC) $(flags) -o $@ -c $<
+
+# -- Executables --#
+$(bin_dir)/$(exe): $(main_obj) $(obj) $(cuda_obj)
+	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+
+$(bin_dir)/$(exe_profile): $(profile_obj) $(obj) $(cuda_obj)
+	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+
+$(bin_dir)/$(exe_cpu): $(main_obj) $(obj)
+	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
+
+$(bin_dir)/$(test_exe): $(test_obj) $(filter-out $(obj_dir)/main_gfx.o, $(obj))
+	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
+

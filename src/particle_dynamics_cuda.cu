@@ -1,13 +1,11 @@
 #include <stdio.h>
 #include <assert.h>
-#include <nvtx3/nvToolsExt.h>
 #include "particle_dynamics_cuda.h"
 
 
 __global__ void compute_rhs_kernel(const float* state, const int* material,
         const float* mass, float* rhs, const int* grid, size_t n, int grid_size,
         int particles_per_cell) {
-    printf("ff\n");
     const float g = 9.81f;
     float floor_y = -1.0f;
     float wall_x = -1.0f;
@@ -24,8 +22,8 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         const size_t mat = material[i];
 //        // Gravity
         force_y -= mass[mat] * g;
-        printf("Particle %lu: mat=%lu, pos=(%.2f, %.2f), vel=(%.2f, %.2f), force=(%.2f, %.2f)\n",
-               i, mat, x, y, vx, vy, force_x, force_y);
+//        printf("Particle %lu: mat=%lu, pos=(%.2f, %.2f), vel=(%.2f, %.2f), force=(%.2f, %.2f)\n",
+//               i, mat, x, y, vx, vy, force_x, force_y);
 //        // Floor force
 //        force_y += c_r[mat][0] * powf(1 / (y - floor_y), 4); // Repulsive force
         float floor_force = max(0.f, min(max_force, max_force / (r0 - r1) * (y - floor_y - r1)));
@@ -93,11 +91,11 @@ __global__ void take_step_kernel(float* state, const float* rhs, size_t n, float
         state[4*i + 1] += dt * state[4*i + 3];
     }
     time += dt;
-    printf("t = %.3f: \n", time);
-    for (size_t dof = 0; dof < 4*n; ++dof) {
-        printf("%.2f ", state[dof]);
-    }
-    printf("\n");
+//    printf("t = %.3f: \n", time);
+//    for (size_t dof = 0; dof < 4*n; ++dof) {
+//        printf("%.2f ", state[dof]);
+//    }
+//    printf("\n");
 
 //    // I want the dt to be .001 when y (aka state[1]) is around -1,
 //    // and .01 when y is around 0
@@ -168,6 +166,8 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 
 //    size_t grid_size = 16;
 //    grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
+    cudaEventCreate(&start_event);
+    cudaEventCreate(&stop_event);
 }
 
 
@@ -198,26 +198,12 @@ printf("type = %d\n", (int)attr.type);
 
 
 void ParticleDynamicsCUDA::unpack_state() {
+    start_timer();
     cudaError_t err;
 
     err = cudaDeviceSynchronize();
     printf("kernel: %s\n", cudaGetErrorString(err));
 
-printf("host_state = %p\n", host_state);
-printf("device_state = %p\n", device_state);
-
-
-cudaGetLastError(); // clear old errors
-
-cudaPointerAttributes attr;
-err =
-    cudaPointerGetAttributes(&attr, device_state);
-printf("attr err = %s\n",
-       cudaGetErrorString(err));
-printf("type = %d\n", (int)attr.type);
-
-printf("bytes = %llu\n",
-       (unsigned long long)(4 * n * sizeof(float)));
     err = cudaMemcpy(host_state, device_state, 4 * n * sizeof(float), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         printf("Memcpy failed: %s\n",
@@ -232,14 +218,7 @@ printf("bytes = %llu\n",
         xy[2*i + 1] = host_state[4 * i + 1];
     }
     printf("Unpacked state for %d particles.\n", n);
-
-
-    printf("after unpack\n");
-err =
-    cudaPointerGetAttributes(&attr, device_state);
-printf("attr err = %s\n",
-       cudaGetErrorString(err));
-printf("type = %d\n", (int)attr.type);
+    stop_timer(time_unpack_state);
 }
 
 
@@ -309,19 +288,23 @@ __global__ void k() {
     printf("hello\n");
 }
 
+void ParticleDynamicsCUDA::start_timer() {
+    cudaEventRecord(start_event);
+}
+
+void ParticleDynamicsCUDA::stop_timer(float& elapsed_time) {
+    cudaEventRecord(stop_event);
+    cudaEventSynchronize(stop_event);
+    float time = 0.f;
+    cudaEventElapsedTime(&time, start_event, stop_event);
+    elapsed_time += time;
+}
+
+
 void ParticleDynamicsCUDA::take_step() {
-    nvtxRangePush("simulation step");
     cudaError_t err;
 
-    printf("in take step\n");
-cudaPointerAttributes attr;
-err =
-    cudaPointerGetAttributes(&attr, device_state);
-printf("attr err = %s\n",
-       cudaGetErrorString(err));
-printf("type = %d\n", (int)attr.type);
-
-
+    start_timer();
     update_grid_kernel<<<1,1>>>(device_grid, device_state, n, grid_size,
             particles_per_cell);
     err = cudaDeviceSynchronize();
@@ -329,7 +312,9 @@ printf("type = %d\n", (int)attr.type);
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
     printf("Updated grid for %d particles.\n", n);
+    stop_timer(time_update_grid);
 
+    start_timer();
     compute_rhs_kernel<<<1,1>>>(device_state, device_material,
             device_mass, device_rhs, device_grid, n, grid_size, particles_per_cell);
     err = cudaDeviceSynchronize();
@@ -337,26 +322,16 @@ printf("type = %d\n", (int)attr.type);
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
     printf("Computed rhs for %d particles.\n", n);
+    stop_timer(time_compute_rhs);
 
+    start_timer();
     take_step_kernel<<<1,1>>>(device_state, device_rhs, n, time, dt);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
     printf("took step\n");
-
-    printf("Now type is:\n");
-err =
-    cudaPointerGetAttributes(&attr, device_state);
-printf("attr err = %s\n",
-       cudaGetErrorString(err));
-printf("type = %d\n", (int)attr.type);
-    nvtxRangePop();
-
-    nvtxRangePush("force_cuda");
-    k<<<1,1>>>();
-    cudaDeviceSynchronize();
-    nvtxRangePop();
+    stop_timer(time_take_step);
 }
 
 ParticleDynamicsCUDA::~ParticleDynamicsCUDA() {

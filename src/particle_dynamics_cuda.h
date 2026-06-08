@@ -1,4 +1,5 @@
 #include <vector>
+#include <cuda_runtime.h>
 
 class ParticleDynamicsCUDA {
 public:
@@ -20,6 +21,15 @@ public:
     float* device_mass;
 
     int* device_grid;
+
+    // Timing
+    float time_update_grid = 0.f;
+    float time_compute_rhs = 0.f;
+    float time_take_step = 0.f;
+    float time_unpack_state = 0.f;
+    cudaEvent_t start_event, stop_event;
+    void start_timer();
+    void stop_timer(float& elapsed_time);
 
 
     ParticleDynamicsCUDA();
