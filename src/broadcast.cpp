@@ -3,7 +3,6 @@
 using std::unique_ptr;
 
 #include "particle_dynamics_cuda.h"
-#include "particle_dynamics.h"
 
 struct PerSocketData {};
 

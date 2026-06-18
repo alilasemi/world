@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 # Compiler
 CXX = g++
-cuda_dir = /usr/local/cuda-13.0/
+cuda_dir = /usr/local/cuda-13.1/
 NVCC = $(cuda_dir)/bin/nvcc
 # Executable names
 exe = world
@@ -15,16 +15,27 @@ bin_dir = $(build_dir)/bin
 test_dir = test
 obj_dir = $(build_dir)/obj
 test_obj_dir = $(build_dir)/obj
+
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
-list_of_src_files = dormand_prince particle_dynamics semi_implicit_euler color_map particle_drawer
+list_of_cpp_files = color_map particle_drawer
+list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics_cuda
+# Sources
+CPP_SRCS := $(addprefix $(src_dir)/, $(list_of_cpp_files:=.cpp))
+CU_SRCS  := $(addprefix $(src_dir)/, $(list_of_cuda_files:=.cu))
+
+CPP_OBJS := $(CPP_SRCS:$(src_dir)/%.cpp=$(obj_dir)/%.o)
+CU_OBJS  := $(CU_SRCS:$(src_dir)/%.cu=$(obj_dir)/%.o)
+
+OBJS := $(CPP_OBJS) $(CU_OBJS)
 # prepend with obj dir and postpend with .o
-obj = $(addprefix $(obj_dir)/, $(list_of_src_files))
+obj =
+obj += $(addprefix $(obj_dir)/, $(list_of_cpp_files))
+obj += $(addprefix $(obj_dir)/, $(list_of_cuda_files))
 obj := $(addsuffix .o, $(obj))
 # Add glad.o as well
 obj += $(obj_dir)/glad.o
 
-cuda_obj = $(obj_dir)/particle_dynamics_cuda.o
 test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
 profile_obj = $(obj_dir)/profiling_sim.o
 main_obj = $(obj_dir)/broadcast.o
@@ -49,13 +60,10 @@ all: directories $(bin_dir)/$(exe) #$(bin_dir)/$(test_exe)
 .PHONY: profile
 profile: directories $(bin_dir)/$(exe_profile) #$(bin_dir)/$(test_exe)
 
-.PHONY: cpu
-cpu: directories $(bin_dir)/$(exe_cpu) #$(bin_dir)/$(test_exe)
-
 # This is purely for testing purposes - allows you to print out anything
 .PHONY: print
 print:
-	$(info $(obj))
+	$(info $(main_obj))
 
 .PHONY: directories
 directories:
@@ -75,25 +83,22 @@ $(obj_dir)/glad.o: external/glad/src/glad.c
 
 # Internal source files
 $(obj_dir)/%.o: $(src_dir)/%.cpp
-	$(CXX) $(flags) $(warnings) -o $@ -c $< $(ldlibs)
+	$(CXX) $(flags) $(warnings) -o $@ -c $<
 
 # Internal source test files
 $(test_obj_dir)/%.o: $(test_dir)/%.cpp
-	$(CXX) $(flags) $(warnings) -o $@ -c $< $(ldlibs)
+	$(CXX) $(flags) $(warnings) -o $@ -c $<
 
 # CUDA files
-$(obj_dir)/particle_dynamics_cuda.o: $(src_dir)/particle_dynamics_cuda.cu
+$(obj_dir)/%.o: $(src_dir)/%.cu
 	$(NVCC) $(flags) -o $@ -c $<
 
 # -- Executables --#
-$(bin_dir)/$(exe): $(main_obj) $(obj) $(cuda_obj)
+$(bin_dir)/$(exe): $(main_obj) $(obj)
 	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(exe_profile): $(profile_obj) $(obj) $(cuda_obj)
 	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
-
-$(bin_dir)/$(exe_cpu): $(main_obj) $(obj)
-	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
 
 $(bin_dir)/$(test_exe): $(test_obj) $(filter-out $(obj_dir)/main_gfx.o, $(obj))
 	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)

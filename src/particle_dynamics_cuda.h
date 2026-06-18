@@ -1,5 +1,8 @@
 #include <vector>
+#include <memory>
 #include <cuda_runtime.h>
+
+#include "compute_rhs_kernel.h"
 
 class ParticleDynamicsCUDA {
 public:
@@ -51,4 +54,7 @@ public:
     // these device pointers and cause problems.
     ParticleDynamicsCUDA(const ParticleDynamicsCUDA&) = delete;
     ParticleDynamicsCUDA& operator=(const ParticleDynamicsCUDA&) = delete;
+
+private:
+    std::unique_ptr<ComputeRHSKernel> compute_rhs_kernel;
 };
