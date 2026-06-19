@@ -55,74 +55,53 @@ __global__ void update_grid_kernel(int* grid, const float* state, size_t n, int
 
 
 ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
+    cudaEventCreate(&start_event);
+    cudaEventCreate(&stop_event);
+
     // Initialize on host
 //    initialize_to_two_particles(0.0f, 0.0f);
     initialize_to_cube(0.0f, 0.0f);
     // Copy to device
-    cudaError_t err = cudaMemcpy(device_state, host_state, 4 * n * sizeof(float), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        printf("Memcpy failed: %s\n",
-               cudaGetErrorString(err));
-    }
-    err = cudaMemcpy(device_material, host_material, n * sizeof(int), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-        printf("Memcpy failed: %s\n",
-               cudaGetErrorString(err));
-    }
+    device_state.copy_from_host(host_state);
+    device_material.copy_from_host(host_material);
     unpack_state();
 
     // Create grid
     grid_size = 16;
     particles_per_cell = 10;
-    cudaMalloc((void**)&device_grid, grid_size * grid_size * particles_per_cell * sizeof(int*));
+    device_grid = DeviceVector<int>(grid_size * grid_size * particles_per_cell);
 
     time = 0.0f;
     // I will assign material 0 to be the walls, material 1 to be the snow, and
     // material 2 to be the sled
-    host_mass = (float*)malloc(3 * sizeof(float));
-    cudaMalloc((void**)&device_mass, 3 * sizeof(float));
+    host_mass = HostVector<float>(3);
+    device_mass = DeviceVector<float>(3);
 
     host_mass[0] = 0.0f;
     host_mass[1] = 1.0f;
     host_mass[2] = 10.0f;
-    cudaMemcpy(device_mass, host_mass, 3 * sizeof(float), cudaMemcpyHostToDevice);
+    device_mass.copy_from_host(host_mass);
 
     dt = 0.001f;
 
 //    size_t grid_size = 16;
 //    grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
-    cudaEventCreate(&start_event);
-    cudaEventCreate(&stop_event);
 
     // Create CUDA kernels
-    compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state, device_material, device_mass, device_grid,
-            n, grid_size, particles_per_cell, device_rhs);
+    compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
+            device_mass.data(), device_grid.data(), n, grid_size, particles_per_cell, device_rhs.data());
 }
 
 
 void ParticleDynamicsCUDA::resize(const int new_n) {
-    cudaError_t err;
     n = new_n;
     xy = std::vector<float>(2*n);
 
-    host_state = (float*)malloc(4 * n * sizeof(float));
-    err = cudaMalloc((void**)&device_state, 4 * n * sizeof(float));
-    printf("cudaMalloc device_state: %s\n", cudaGetErrorString(err));
-
-cudaPointerAttributes attr;
-err =
-    cudaPointerGetAttributes(&attr, device_state);
-printf("attr err = %s\n",
-       cudaGetErrorString(err));
-printf("type = %d\n", (int)attr.type);
-
-    host_rhs = (float*)malloc(4 * n * sizeof(float));
-    err = cudaMalloc((void**)&device_rhs, 4 * n * sizeof(float));
-    printf("cudaMalloc device_rhs: %s\n", cudaGetErrorString(err));
-
-    host_material = (int*)malloc(n * sizeof(int));
-    err = cudaMalloc((void**)&device_material, n * sizeof(int));
-    printf("cudaMalloc device_material: %s\n", cudaGetErrorString(err));
+    host_state = HostVector<float>(4 * n);
+    device_state = DeviceVector<float>(4 * n);
+    device_rhs = DeviceVector<float>(4 * n);
+    host_material = HostVector<int>(n);
+    device_material = DeviceVector<int>(n);
 }
 
 
@@ -133,12 +112,7 @@ void ParticleDynamicsCUDA::unpack_state() {
     err = cudaDeviceSynchronize();
     printf("kernel: %s\n", cudaGetErrorString(err));
 
-    err = cudaMemcpy(host_state, device_state, 4 * n * sizeof(float), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        printf("Memcpy failed: %s\n",
-               cudaGetErrorString(err));
-        exit(1);
-    }
+    host_state.copy_from_device(device_state);
 
     printf("Unpacking state for %d particles...\n", n);
     for (size_t i = 0; i < n; ++i) {
@@ -206,7 +180,7 @@ void ParticleDynamicsCUDA::initialize_to_cube(const float x0, const float y0) {
     printf("in init cube\n");
 cudaPointerAttributes attr;
 err =
-    cudaPointerGetAttributes(&attr, device_state);
+    cudaPointerGetAttributes(&attr, device_state.data());
 printf("attr err = %s\n",
        cudaGetErrorString(err));
 printf("type = %d\n", (int)attr.type);
@@ -234,7 +208,7 @@ void ParticleDynamicsCUDA::take_step() {
     cudaError_t err;
 
     start_timer();
-    update_grid_kernel<<<1,1>>>(device_grid, device_state, n, grid_size,
+    update_grid_kernel<<<1,1>>>(device_grid.data(), device_state.data(), n, grid_size,
             particles_per_cell);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
@@ -253,7 +227,7 @@ void ParticleDynamicsCUDA::take_step() {
     stop_timer(time_compute_rhs);
 
     start_timer();
-    take_step_kernel<<<1,1>>>(device_state, device_rhs, n, time, dt);
+    take_step_kernel<<<1,1>>>(device_state.data(), device_rhs.data(), n, time, dt);
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
@@ -262,13 +236,4 @@ void ParticleDynamicsCUDA::take_step() {
     stop_timer(time_take_step);
 }
 
-ParticleDynamicsCUDA::~ParticleDynamicsCUDA() {
-    free(host_state);
-    cudaFree(device_state);
-    free(host_rhs);
-    cudaFree(device_rhs);
-    free(host_material);
-    cudaFree(device_material);
-    free(host_mass);
-    cudaFree(device_mass);
-}
+ParticleDynamicsCUDA::~ParticleDynamicsCUDA() = default;

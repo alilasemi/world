@@ -3,6 +3,8 @@
 #include <cuda_runtime.h>
 
 #include "compute_rhs_kernel.h"
+#include "device_vector.h"
+#include "host_vector.h"
 
 class ParticleDynamicsCUDA {
 public:
@@ -14,16 +16,15 @@ public:
 
     std::vector<float> xy;
 
-    float* host_state;
-    float* device_state;
-    float* host_rhs;
-    float* device_rhs;
-    int* host_material;
-    int* device_material;
-    float* host_mass;
-    float* device_mass;
+    HostVector<float> host_state;
+    DeviceVector<float> device_state;
+    DeviceVector<float> device_rhs;
+    HostVector<int> host_material;
+    DeviceVector<int> device_material;
+    HostVector<float> host_mass;
+    DeviceVector<float> device_mass;
 
-    int* device_grid;
+    DeviceVector<int> device_grid;
 
     // Timing
     float time_update_grid = 0.f;
