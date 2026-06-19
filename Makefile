@@ -1,11 +1,30 @@
 SHELL := /bin/bash
-# Compiler
-CXX = g++
-cuda_dir = /usr/local/cuda-13.1/
-NVCC = $(cuda_dir)/bin/nvcc
+
+# -- Environment checks -- #
+ifneq ($(shell uname -s),Linux)
+$(error This Makefile currently only supports Linux (uses X11/GLX linker flags). Detected: $(shell uname -s))
+endif
+
+# -- Compiler / CUDA auto-detection -- #
+CXX ?= g++
+
+# Resolve the CUDA toolkit location: respect CUDA_HOME/CUDA_PATH if set,
+# else derive it from `nvcc` on PATH, else fall back to the common symlink.
+CUDA_HOME ?= $(or $(CUDA_PATH),$(shell command -v nvcc >/dev/null 2>&1 && dirname $$(dirname $$(command -v nvcc)) || echo /usr/local/cuda))
+NVCC := $(CUDA_HOME)/bin/nvcc
+ifeq (,$(wildcard $(NVCC)))
+$(error CUDA toolkit not found at '$(CUDA_HOME)/bin/nvcc'. Install CUDA, or set CUDA_HOME=/path/to/cuda)
+endif
+
+# GPU architecture: auto-detect the local GPU at compile time. Override with
+# `make GPU_ARCH=sm_75` for cross-compiling or unusual setups.
+GPU_ARCH ?= native
+cuda_flags = -arch=$(GPU_ARCH)
+
+$(info Using CXX=$(CXX) CUDA_HOME=$(CUDA_HOME) GPU_ARCH=$(GPU_ARCH))
+
 # Executable names
 exe = world
-exe_cpu = world_cpu
 test_exe = test
 exe_profile = profile
 # Directories
@@ -39,8 +58,36 @@ obj += $(obj_dir)/glad.o
 test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
 profile_obj = $(obj_dir)/profiling_sim.o
 main_obj = $(obj_dir)/broadcast.o
+
+# -- External dependencies (auto-built if missing) -- #
+glfw_lib = external/glfw/build/lib/libglfw3.a
+gtest_lib = external/googletest/build/lib/libgtest.a
+usockets_lib = external/uWebSockets/uSockets/uSockets.a
+glad_src = external/glad/src/glad.c
+
+ifeq (,$(wildcard $(glad_src)))
+$(error GLAD not found in external/glad/. Generate it at https://glad.dav1d.de/ (GL version 3.3, Profile = Core), download the zip, and extract it into external/glad/)
+endif
+
+$(glfw_lib):
+	if [ ! -d external/glfw ]; then git clone https://github.com/glfw/glfw external/glfw; fi
+	cmake -S external/glfw -B external/glfw/build -DCMAKE_INSTALL_PREFIX=external/glfw/build
+	cmake --build external/glfw/build --target install -j
+
+$(gtest_lib):
+	if [ ! -d external/googletest ]; then git clone https://github.com/google/googletest external/googletest; fi
+	cmake -S external/googletest -B external/googletest/build -DCMAKE_INSTALL_PREFIX=external/googletest/build
+	cmake --build external/googletest/build --target install -j
+
+$(usockets_lib):
+	if [ ! -d external/uWebSockets ]; then git clone --recurse-submodules https://github.com/uNetworking/uWebSockets external/uWebSockets; fi
+	$(MAKE) -C external/uWebSockets/uSockets
+
+.PHONY: deps
+deps: $(glfw_lib) $(gtest_lib) $(usockets_lib)
+
 # Paths to includes
-include_paths = $(src_dir) $(cuda_dir)/include external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/
+include_paths = $(src_dir) $(CUDA_HOME)/include external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/
 # Warnings
 warnings = -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wreorder
 # Compiler flags
@@ -49,16 +96,17 @@ debug: flags += -g -DDEBUG
 debug: all
 # Libraries and locations
 ldlibs = -Lexternal/googletest/build/lib -lgtest -lgtest_main -Lexternal/glfw/build/lib -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl external/uWebSockets/uSockets/uSockets.a -lz -lssl -lcrypto -lpthread
-cuda_ldlibs = -L$(cuda_dir)/lib64 -lcudart
-# Useful variables
-empty =
-test_suffix = _test
+cuda_ldlibs = -L$(CUDA_HOME)/lib64 -lcudart
 
 .PHONY: all
-all: directories $(bin_dir)/$(exe) #$(bin_dir)/$(test_exe)
+all: deps directories $(bin_dir)/$(exe)
 
 .PHONY: profile
-profile: directories $(bin_dir)/$(exe_profile) #$(bin_dir)/$(test_exe)
+profile: deps directories $(bin_dir)/$(exe_profile)
+
+.PHONY: test
+test: deps directories $(bin_dir)/$(test_exe)
+	./$(bin_dir)/$(test_exe)
 
 # This is purely for testing purposes - allows you to print out anything
 .PHONY: print
@@ -91,15 +139,14 @@ $(test_obj_dir)/%.o: $(test_dir)/%.cpp
 
 # CUDA files
 $(obj_dir)/%.o: $(src_dir)/%.cu
-	$(NVCC) $(flags) -o $@ -c $<
+	$(NVCC) $(flags) $(cuda_flags) -o $@ -c $<
 
 # -- Executables --#
 $(bin_dir)/$(exe): $(main_obj) $(obj)
-	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
-$(bin_dir)/$(exe_profile): $(profile_obj) $(obj) $(cuda_obj)
-	$(NVCC) $(flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+$(bin_dir)/$(exe_profile): $(profile_obj) $(obj)
+	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
-$(bin_dir)/$(test_exe): $(test_obj) $(filter-out $(obj_dir)/main_gfx.o, $(obj))
-	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs)
-
+$(bin_dir)/$(test_exe): $(test_obj) $(obj)
+	$(CXX) $(flags) $(warnings) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
