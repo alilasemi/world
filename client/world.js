@@ -98,7 +98,7 @@ class ParticleDrawer {
     constructor(n, num_triangles) {
         this.n = n;
         this.num_triangles = num_triangles;
-        this.radius = 0.05;
+        this.radius = 0.01;
         this.node_coords = new Float32Array(n * (num_triangles + 1) * 3);
         this.triangles = new Int32Array(num_triangles * n * 3);
         this.create_triangle_connectivity();

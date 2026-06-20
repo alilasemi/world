@@ -13,9 +13,8 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
     float floor_y = -1.0f;
     float left_wall_x = -1.0f;
     float right_wall_x = 1.0f;
-    float max_force = 1000.f;
-    float r0 = 0.05f;
-    float r1 = 0.1f;
+    float max_force = 100.f;
+    float radius = .01f;
     for (int i = index; i < n; i += stride) {
         const float x = state[4 * i + 0];
         const float y = state[4 * i + 1];
@@ -29,15 +28,18 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         force_y -= mass[mat] * g;
 
         // Floor force
-        float floor_force     = max(0.f, min(max_force, max_force / (r0 - r1) * (y - floor_y - r1)));
+        float floor_dist = abs(y - floor_y) - radius;
+        float floor_force = max(0.f, min(max_force, -max_force / radius * floor_dist));
         force_y += floor_force; // Repulsive force
         force_y -= floor_force * vy; // Damping based on velocity
         // Wall on the left
-        float left_wall_force = max(0.f, min(max_force, max_force / (r0 - r1) * (x - left_wall_x - r1)));
+        float wall_dist_left = abs(x - left_wall_x) - radius;
+        float left_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_left));
         force_x += left_wall_force; // Repulsive force
         force_x -= left_wall_force * vx; // Damping based on velocity
         // Wall on the right
-        float right_wall_force = max(0.f, min(max_force, max_force / (r0 - r1) * (-x + right_wall_x - r1)));
+        float wall_dist_right = abs(x - right_wall_x) - radius;
+        float right_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_right));
         force_x -= right_wall_force; // Repulsive force
         force_x -= right_wall_force * vx; // Damping based on velocity
 
@@ -60,12 +62,13 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
                             const float vy_j = state[4 * j + 3];
                             const float dx = x - x_j;
                             const float dy = y - y_j;
-                            const float dist = sqrtf(dx * dx + dy * dy);
+                            const float norm = sqrtf(dx * dx + dy * dy);
+                            const float dist = norm - radius - radius;
                             const size_t mat_j = material[j];
                             // Repulsive force
-                            float force = max(0.f, min(max_force, max_force / (r0 - r1) * (dist - r1)));
-                            force_y += force * (dy / dist);
-                            force_x += force * (dx / dist);
+                            float force = max(0.f, min(max_force, -max_force / radius * dist));
+                            force_y += force * (dy / norm);
+                            force_x += force * (dx / norm);
                             // Damping based on relative velocity
                             force_x -= force * (vx - vx_j);
                             force_y -= force * (vy - vy_j);

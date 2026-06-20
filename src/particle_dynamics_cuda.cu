@@ -18,7 +18,7 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     unpack_state();
 
     // Create grid
-    grid_size = 16;
+    grid_size = 256;
     particles_per_cell = 10;
     device_grid = DeviceVector<int>(grid_size * grid_size * particles_per_cell);
 
@@ -29,11 +29,11 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     device_mass = DeviceVector<float>(3);
 
     host_mass[0] = 0.0f;
-    host_mass[1] = 1.0f;
-    host_mass[2] = 1.0f;
+    host_mass[1] = .04f;
+    host_mass[2] = .04f;
     device_mass.copy_from_host(host_mass);
 
-    dt = 0.001f;
+    dt = 0.0001f;
 
 //    size_t grid_size = 16;
 //    grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
@@ -71,13 +71,11 @@ void ParticleDynamicsCUDA::unpack_state() {
 
     host_state.copy_from_device(device_state);
 
-    printf("Unpacking state for %d particles...\n", n);
     for (size_t i = 0; i < n; ++i) {
-        printf("Particle %lu: host_state = (%.2f, %.2f, %.2f, %.2f)\n", i, host_state[4 * i + 0], host_state[4 * i + 1], host_state[4 * i + 2], host_state[4 * i + 3]);
+//        printf("Particle %lu: host_state = (%.2f, %.2f, %.2f, %.2f)\n", i, host_state[4 * i + 0], host_state[4 * i + 1], host_state[4 * i + 2], host_state[4 * i + 3]);
         xy[2*i + 0] = host_state[4 * i + 0];
         xy[2*i + 1] = host_state[4 * i + 1];
     }
-    printf("Unpacked state for %d particles.\n", n);
     stop_timer(time_unpack_state);
 }
 
@@ -108,13 +106,15 @@ void ParticleDynamicsCUDA::initialize_to_two_particles(const float x0, const flo
 
 
 void ParticleDynamicsCUDA::initialize_to_cube(const float x0, const float y0) {
-    size_t num_per_side = 10;
+    float length = 1.f;
+    float radius = 0.01f;
+    int num_per_side = static_cast<int>(length / (2 * radius));
     resize(num_per_side * num_per_side + 1);
 
     for (size_t i = 0; i < num_per_side; ++i) {
         for (size_t j = 0; j < num_per_side; ++j) {
-            host_state[4 * (i * num_per_side + j) + 0] = x0 + i * 0.1f;
-            host_state[4 * (i * num_per_side + j) + 1] = y0 + j * 0.1f;
+            host_state[4 * (i * num_per_side + j) + 0] = x0 + i * 2 * radius;
+            host_state[4 * (i * num_per_side + j) + 1] = y0 + j * 2 * radius;
             host_state[4 * (i * num_per_side + j) + 2] = 0.0f;
             host_state[4 * (i * num_per_side + j) + 3] = 0.0f;
         }
@@ -131,16 +131,6 @@ void ParticleDynamicsCUDA::initialize_to_cube(const float x0, const float y0) {
         host_material[i] = 1;
     }
     host_material[n - 1] = 2;
-
-    cudaError_t err;
-
-    printf("in init cube\n");
-cudaPointerAttributes attr;
-err =
-    cudaPointerGetAttributes(&attr, device_state.data());
-printf("attr err = %s\n",
-       cudaGetErrorString(err));
-printf("type = %d\n", (int)attr.type);
 }
 
 
