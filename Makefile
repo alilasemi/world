@@ -27,6 +27,7 @@ $(info Using CXX=$(CXX) CUDA_HOME=$(CUDA_HOME) GPU_ARCH=$(GPU_ARCH))
 exe = world
 test_exe = test
 exe_profile = profile
+exe_stability = stability_and_accuracy
 # Directories
 src_dir = src
 build_dir = build
@@ -38,7 +39,7 @@ test_obj_dir = $(build_dir)/obj
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
 list_of_cpp_files = color_map particle_drawer
-list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics_cuda update_grid_kernel take_step_kernel
+list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics_cuda update_grid_kernel take_step_kernel energy_kernel
 # Sources
 CPP_SRCS := $(addprefix $(src_dir)/, $(list_of_cpp_files:=.cpp))
 CU_SRCS  := $(addprefix $(src_dir)/, $(list_of_cuda_files:=.cu))
@@ -58,6 +59,7 @@ obj += $(obj_dir)/glad.o
 test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
 profile_obj = $(obj_dir)/profiling_sim.o
 main_obj = $(obj_dir)/broadcast.o
+stability_obj = $(obj_dir)/stability_and_accuracy.o
 
 # -- External dependencies (auto-built if missing) -- #
 glfw_lib = external/glfw/build/lib/libglfw3.a
@@ -104,6 +106,9 @@ all: deps directories $(bin_dir)/$(exe)
 .PHONY: profile
 profile: deps directories $(bin_dir)/$(exe_profile)
 
+.PHONY: stability
+stability: deps directories $(bin_dir)/$(exe_stability)
+
 .PHONY: test
 test: deps directories $(bin_dir)/$(test_exe)
 	./$(bin_dir)/$(test_exe)
@@ -146,6 +151,9 @@ $(bin_dir)/$(exe): $(main_obj) $(obj)
 	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(exe_profile): $(profile_obj) $(obj)
+	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+
+$(bin_dir)/$(exe_stability): $(stability_obj) $(obj)
 	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(test_exe): $(test_obj) $(obj)

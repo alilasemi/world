@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
+#include <cmath>
 #include "particle_dynamics_cuda.h"
 #include "cuda_check.h"
 
@@ -43,6 +44,11 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_grid.data(), n, grid_size, particles_per_cell, device_rhs.data());
     take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt);
+
+    device_energy = DeviceVector<float>(1);
+    host_energy = HostVector<float>(1);
+    energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
+            device_mass.data(), n, device_energy.data());
 }
 
 
@@ -162,5 +168,25 @@ void ParticleDynamicsCUDA::take_step() {
     (*take_step_kernel)();
     time_take_step = take_step_kernel->wall_clock_time();
 }
+
+float ParticleDynamicsCUDA::compute_total_energy() {
+    (*energy_kernel)();
+    host_energy.copy_from_device(device_energy);
+    return host_energy[0];
+}
+
+
+bool ParticleDynamicsCUDA::is_stable() {
+    host_state.copy_from_device(device_state);
+    for (int i = 0; i < n; ++i) {
+        const float x = host_state[4 * i + 0];
+        const float y = host_state[4 * i + 1];
+        if (!std::isfinite(x) || !std::isfinite(y) || x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 
 ParticleDynamicsCUDA::~ParticleDynamicsCUDA() = default;

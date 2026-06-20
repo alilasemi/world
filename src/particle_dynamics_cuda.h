@@ -4,6 +4,7 @@
 
 #include "compute_rhs_kernel.h"
 #include "device_vector.h"
+#include "energy_kernel.h"
 #include "host_vector.h"
 #include "take_step_kernel.h"
 #include "update_grid_kernel.h"
@@ -28,6 +29,9 @@ public:
 
     DeviceVector<int> device_grid;
 
+    DeviceVector<float> device_energy;
+    HostVector<float> host_energy;
+
     // Timing
     float time_update_grid = 0.f;
     float time_compute_rhs = 0.f;
@@ -51,6 +55,12 @@ public:
 
     void take_step();
 
+    float compute_total_energy();
+
+    // Copies device state to host and checks whether every particle's
+    // (x, y) is finite and within the [-1, 1]x[-1, 1] domain.
+    bool is_stable();
+
     ~ParticleDynamicsCUDA();
 
     // Prevent copying and assignment. It's error prone since CPU code can copy
@@ -62,4 +72,5 @@ private:
     std::unique_ptr<UpdateGridKernel> update_grid_kernel;
     std::unique_ptr<ComputeRHSKernel> compute_rhs_kernel;
     std::unique_ptr<TakeStepKernel> take_step_kernel;
+    std::unique_ptr<EnergyKernel> energy_kernel;
 };
