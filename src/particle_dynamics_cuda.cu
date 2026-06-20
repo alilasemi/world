@@ -11,7 +11,7 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 
     // Initialize on host
 //    initialize_to_two_particles(0.0f, 0.0f);
-    initialize_to_cube(0.0f, 0.0f);
+    initialize_to_cube(-.5f, 0.0f);
     // Copy to device
     device_state.copy_from_host(host_state);
     device_material.copy_from_host(host_material);
@@ -30,7 +30,7 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 
     host_mass[0] = 0.0f;
     host_mass[1] = 1.0f;
-    host_mass[2] = 10.0f;
+    host_mass[2] = 1.0f;
     device_mass.copy_from_host(host_mass);
 
     dt = 0.001f;

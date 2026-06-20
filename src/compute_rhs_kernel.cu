@@ -11,7 +11,8 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
     const float g = 9.81f;
     float floor_y = -1.0f;
-    float wall_x = -1.0f;
+    float left_wall_x = -1.0f;
+    float right_wall_x = 1.0f;
     float max_force = 1000.f;
     float r0 = 0.05f;
     float r1 = 0.1f;
@@ -23,21 +24,24 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         float force_x = 0;
         float force_y = 0;
         const size_t mat = material[i];
-//        // Gravity
+
+        // Gravity
         force_y -= mass[mat] * g;
-//        printf("Particle %lu: mat=%lu, pos=(%.2f, %.2f), vel=(%.2f, %.2f), force=(%.2f, %.2f)\n",
-//               i, mat, x, y, vx, vy, force_x, force_y);
-//        // Floor force
-//        force_y += c_r[mat][0] * powf(1 / (y - floor_y), 4); // Repulsive force
-        float floor_force = max(0.f, min(max_force, max_force / (r0 - r1) * (y - floor_y - r1)));
+
+        // Floor force
+        float floor_force     = max(0.f, min(max_force, max_force / (r0 - r1) * (y - floor_y - r1)));
         force_y += floor_force; // Repulsive force
         force_y -= floor_force * vy; // Damping based on velocity
-//            // Wall on the left (at -1)
-//            float wall_force = max(0, min(max_force, max_force / (r0 - r1) * (x - wall_x - r1)));
-//            force_x += wall_force; // Repulsive force
-//            force_x -= wall_force * vx; // Damping based on velocity
+        // Wall on the left
+        float left_wall_force = max(0.f, min(max_force, max_force / (r0 - r1) * (x - left_wall_x - r1)));
+        force_x += left_wall_force; // Repulsive force
+        force_x -= left_wall_force * vx; // Damping based on velocity
+        // Wall on the right
+        float right_wall_force = max(0.f, min(max_force, max_force / (r0 - r1) * (-x + right_wall_x - r1)));
+        force_x -= right_wall_force; // Repulsive force
+        force_x -= right_wall_force * vx; // Damping based on velocity
 
-
+        // Particle-particle interactions using the spatial grid
         int cell_x = min(grid_size - 1, max(0, static_cast<int>((x + 1.0f) / 2.0f * grid_size)));
         int cell_y = min(grid_size - 1, max(0, static_cast<int>((y + 1.0f) / 2.0f * grid_size)));
         for (int dx = -1; dx <= 1; ++dx) {
