@@ -6,8 +6,8 @@
 __global__ void compute_rhs_kernel(const float* state, const int* material,
         const float* mass, float* rhs, const int* grid, size_t n, int grid_size,
         int particles_per_cell) {
-    int index = threadIdx.x;
-    int stride = blockDim.x;
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
 
     const float g = 9.81f;
     float floor_y = -1.0f;
@@ -89,10 +89,7 @@ ComputeRHSKernel::ComputeRHSKernel(const float* state_, const int* material_, co
 }
 
 
-void ComputeRHSKernel::call_kernel() {
-    int threads_per_block = 256;
-    int blocks = (n + threads_per_block - 1) / threads_per_block;
+void ComputeRHSKernel::call_kernel(int blocks, int threads_per_block) {
     compute_rhs_kernel<<<blocks, threads_per_block>>>(state, material, mass, rhs, grid, n, grid_size, particles_per_cell);
-    cudaDeviceSynchronize();
 }
 

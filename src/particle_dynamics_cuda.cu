@@ -1,57 +1,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include "particle_dynamics_cuda.h"
-
-
-
-__global__ void take_step_kernel(float* state, const float* rhs, size_t n, float time, float dt) {
-    // Update velocities
-    for (size_t i = 0; i < n; ++i) {
-        state[4*i + 2] += dt * rhs[4*i + 2];
-        state[4*i + 3] += dt * rhs[4*i + 3];
-    }
-    // Then, update positions using the new velocities
-    for (size_t i = 0; i < n; ++i) {
-        state[4*i + 0] += dt * state[4*i + 2];
-        state[4*i + 1] += dt * state[4*i + 3];
-    }
-    time += dt;
-//    printf("t = %.3f: \n", time);
-//    for (size_t dof = 0; dof < 4*n; ++dof) {
-//        printf("%.2f ", state[dof]);
-//    }
-//    printf("\n");
-
-//    // I want the dt to be .001 when y (aka state[1]) is around -1,
-//    // and .01 when y is around 0
-//    dt = 0.01f * (1 + system.state[1]) - 0.001f * system.state[1];
-    dt = 0.001f;
-}
-
-__global__ void update_grid_kernel(int* grid, const float* state, size_t n, int
-        grid_size, int particles_per_cell) {
-    // Let the first "particle" position actually be the count of particles in
-    // this cell. Initialize to zero
-    for (size_t i = 0; i < n; ++i) {
-        int cell_x = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 0] + 1.0f) / 2.0f * grid_size)));
-        int cell_y = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 1] + 1.0f) / 2.0f * grid_size)));
-        grid[cell_x * grid_size * particles_per_cell + cell_y * particles_per_cell] = 0;
-    }
-    // Then, loop over particles and add them to the grid
-    for (size_t i = 0; i < n; ++i) {
-        int cell_x = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 0] + 1.0f) / 2.0f * grid_size)));
-        int cell_y = min(grid_size - 1, max(0, static_cast<int>((state[4 * i + 1] + 1.0f) / 2.0f * grid_size)));
-        int index = cell_x * grid_size * particles_per_cell + cell_y * particles_per_cell;
-        grid[index] += 1; // Increment count of particles in this cell
-        if (grid[index] < particles_per_cell) {
-            grid[index + grid[index]] = i; // Store particle index
-        } else {
-            // Handle overflow (too many particles in this cell)
-            printf("Error: too many particles in cell (%d, %d)\n", cell_x, cell_y);
-            assert(false);
-        }
-    }
-}
+#include "cuda_check.h"
 
 
 ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
@@ -88,8 +38,11 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 //    grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
 
     // Create CUDA kernels
+    update_grid_kernel = std::make_unique<UpdateGridKernel>(device_grid.data(), device_state.data(),
+            n, grid_size, particles_per_cell);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_grid.data(), n, grid_size, particles_per_cell, device_rhs.data());
+    take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt);
 }
 
 
@@ -107,10 +60,8 @@ void ParticleDynamicsCUDA::resize(const int new_n) {
 
 void ParticleDynamicsCUDA::unpack_state() {
     start_timer();
-    cudaError_t err;
 
-    err = cudaDeviceSynchronize();
-    printf("kernel: %s\n", cudaGetErrorString(err));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     host_state.copy_from_device(device_state);
 
@@ -187,10 +138,6 @@ printf("type = %d\n", (int)attr.type);
 }
 
 
-__global__ void k() {
-    printf("hello\n");
-}
-
 void ParticleDynamicsCUDA::start_timer() {
     cudaEventRecord(start_event);
 }
@@ -205,35 +152,15 @@ void ParticleDynamicsCUDA::stop_timer(float& elapsed_time) {
 
 
 void ParticleDynamicsCUDA::take_step() {
-    cudaError_t err;
+    (*update_grid_kernel)();
+    time_update_grid = update_grid_kernel->wall_clock_time();
 
-    start_timer();
-    update_grid_kernel<<<1,1>>>(device_grid.data(), device_state.data(), n, grid_size,
-            particles_per_cell);
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        printf("CUDA error: %s\n", cudaGetErrorString(err));
-    }
-    printf("Updated grid for %d particles.\n", n);
-    stop_timer(time_update_grid);
-
-    start_timer();
     (*compute_rhs_kernel)();
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        printf("CUDA error: %s\n", cudaGetErrorString(err));
-    }
-    printf("Computed rhs for %d particles.\n", n);
-    stop_timer(time_compute_rhs);
+    time_compute_rhs = compute_rhs_kernel->wall_clock_time();
 
-    start_timer();
-    take_step_kernel<<<1,1>>>(device_state.data(), device_rhs.data(), n, time, dt);
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        printf("CUDA error: %s\n", cudaGetErrorString(err));
-    }
-    printf("took step\n");
-    stop_timer(time_take_step);
+    take_step_kernel->set_dt(dt);
+    (*take_step_kernel)();
+    time_take_step = take_step_kernel->wall_clock_time();
 }
 
 ParticleDynamicsCUDA::~ParticleDynamicsCUDA() = default;

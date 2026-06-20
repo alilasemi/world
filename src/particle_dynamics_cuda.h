@@ -5,6 +5,8 @@
 #include "compute_rhs_kernel.h"
 #include "device_vector.h"
 #include "host_vector.h"
+#include "take_step_kernel.h"
+#include "update_grid_kernel.h"
 
 class ParticleDynamicsCUDA {
 public:
@@ -57,5 +59,7 @@ public:
     ParticleDynamicsCUDA& operator=(const ParticleDynamicsCUDA&) = delete;
 
 private:
+    std::unique_ptr<UpdateGridKernel> update_grid_kernel;
     std::unique_ptr<ComputeRHSKernel> compute_rhs_kernel;
+    std::unique_ptr<TakeStepKernel> take_step_kernel;
 };
