@@ -18,7 +18,7 @@ make              # build deps + build/bin/world (the WebSocket sim server)
 make debug        # same, with -g -DDEBUG
 make profile      # build build/bin/profile (no-network profiling binary, see src/profiling_sim.cpp)
 make stability    # build build/bin/stability_and_accuracy (dt sweep, see src/stability_and_accuracy.cpp)
-make test         # build and run build/bin/test (currently does not compile, see Known issues)
+make test         # build and run build/bin/test (GoogleTest suite, see Testing below)
 make clean        # rm -rf build/
 make GPU_ARCH=sm_75   # override arch for cross-compiling / unusual setups
 ```
@@ -47,7 +47,7 @@ Open `http://localhost:8080` in a browser. The page hits `/config` to learn `mod
 
 The client (`client/webgl_demo.js`, `Client` class) mirrors this as a small state machine: `state 0` (waiting for `n`) -> `state 1` (waiting for IC) -> `state 2+` (steady loop: draw, render, request next `"run"`). `client/index.js` is unrelated to the sim — it's just the Express static file/`,/config` server.
 
-`test/main.cpp` and `src/profiling_sim.cpp` are alternate driver entry points (no WebSocket) that run `ParticleDynamicsCUDA` directly and print timings — useful for profiling/debugging without spinning up the client.
+`src/profiling_sim.cpp` is an alternate driver entry point (no WebSocket) that runs `ParticleDynamicsCUDA` directly and prints timings — useful for profiling/debugging without spinning up the client. `test/particle_dynamics_cuda_test.cpp` drives `ParticleDynamicsCUDA` the same way, under GoogleTest (see "Testing" below).
 
 `src/stability_and_accuracy.cpp` (`build/bin/stability_and_accuracy`) is a third driver: it sweeps a fixed list of `dt` values, running each from the same default IC to simulated `t = 0.1s` and reporting final total energy (`ParticleDynamicsCUDA::compute_total_energy()`) and a stability verdict (`ParticleDynamicsCUDA::is_stable()` — all particles finite and within `[-1,1]x[-1,1]`). Because `CUDA_CHECK` `abort()`s the whole process on any CUDA error (e.g. `UpdateGridKernel`'s grid-overflow assert, plausible under a large/unstable `dt`), each `dt` runs in its own `fork()`+`execl()`-relaunched child process (the same binary re-invoked with `--dt <value> --out <path>`) so one crashing `dt` doesn't take down the rest of the sweep; the parent never touches CUDA itself (fork-after-CUDA-init is unsupported) and reports a non-zero/signaled child exit as `stable = false` rather than reading the (possibly absent) output file.
 
@@ -76,13 +76,18 @@ All six derive from the `Kernel` base class (`src/kernel.h`/`.cu`), which is the
 
 `src/host_vector.h` and `src/device_vector.h` are move-only RAII wrappers (malloc/cudaMalloc-backed) replacing raw host/device pointers. They're forward-declared against each other so `HostVector::copy_from_device` / `DeviceVector::copy_from_host` can cross-reference; `DeviceVector` deliberately has no `operator[]` since dereferencing device memory from host code is UB. All CUDA API calls should go through `CUDA_CHECK(...)` (src/cuda_check.h), which aborts with file/line/expr context on failure.
 
+### Testing
+
+`test/main.cpp` is just the GoogleTest entrypoint (`InitGoogleTest`/`RUN_ALL_TESTS`); the actual tests live in `test/particle_dynamics_cuda_test.cpp`, which constructs `ParticleDynamicsCUDA` directly (plain g++-compiled `.cpp`, same pattern as `src/profiling_sim.cpp` — no special CUDA-aware compilation needed for host code that just calls into the class). `test_src = $(wildcard test/*.cpp)` and the test binary links against every kernel `.o`, so dropping a new `test/*.cpp` file in is enough to pick it up; no Makefile changes needed.
+
+Tests mutate `sim.host_state[...]`/`sim.device_grid_force_y` etc. directly (all public) rather than calling `resize()`/`initialize_to_*()` after construction — those reallocate `host_state`/`device_state` to a new `n`, but the kernel objects (`compute_rhs_kernel` etc.) already baked in the *original* `n` at construction time via the `Kernel` base class, so calling them post-construction desyncs kernel loop bounds from buffer size and causes out-of-bounds device access. Push host-side edits to the device with `sim.device_state.copy_from_host(sim.host_state)` (or the relevant `DeviceVector`) instead.
+
 ### Rendering
 
 `ParticleDrawer` (`src/particle_drawer.{h,cpp}` and its hand-ported JS twin in `client/webgl_demo.js`) turns each particle's `(x, y)` into a small N-gon (fan of `num_triangles` triangles around a center point) for rasterization — geometry generation logic must be kept in sync between the C++ and JS versions if changed. `src/shader.h` is an unused native-OpenGL GLFW-era shader helper; the actual rendering path is the WebGL2/JS one in `client/`.
 
 ## Known issues
 
-- `test/integrator_test.cpp` and `test/system_test.cpp` `#include` headers (`dormand_prince.h`, `particle_dynamics.h`) that do not exist anywhere in `src/`. `make test` will fail at compile time until these tests are rewritten against current code (e.g. `particle_dynamics_cuda.h`).
 - `ParticleDynamicsCUDA::time` (the host-side simulation clock) is never actually incremented anywhere — a pre-existing, currently-harmless latent bug (nothing reads it).
 - The Makefile's pattern rules (`$(obj_dir)/%.o: $(src_dir)/%.cpp`/`.cu`) only depend on the matching source file, not on any headers it includes — there's no `-MMD`/`.d`-file dependency tracking. Editing a widely-included header (e.g. `particle_dynamics_cuda.h`) and then doing an incremental `make` can silently link a stale `.o` (compiled against the old struct layout) against a freshly-rebuilt one, corrupting the stack at runtime (observed as "stack smashing detected" with garbage timing values). `make clean` before rebuilding after a header change is the reliable workaround.
 
