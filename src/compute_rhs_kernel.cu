@@ -4,8 +4,8 @@
 
 
 __global__ void compute_rhs_kernel(const float* state, const int* material,
-        const float* mass, float* rhs, const int* grid, size_t n, int grid_size,
-        int particles_per_cell) {
+        const float* mass, float* rhs, const int* grid, const float* body_force_x, const float* body_force_y,
+        size_t n, int grid_size, int particles_per_cell) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
@@ -78,6 +78,11 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
             }
         }
 
+        // Externally-supplied (e.g. AI-predicted) body force, already
+        // interpolated onto this particle's position.
+        force_x += body_force_x[i];
+        force_y += body_force_y[i];
+
         const float ax = force_x / mass[mat];
         const float ay = force_y / mass[mat];
 
@@ -90,13 +95,16 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
 
 ComputeRHSKernel::ComputeRHSKernel(const float* state_, const int* material_, const float* mass_, const int* grid_,
+            const float* body_force_x_, const float* body_force_y_,
             const int n_, const int grid_size_, const int particles_per_cell_, float* rhs_)
         : state(state_), material(material_), mass(mass_), grid(grid_),
+          body_force_x(body_force_x_), body_force_y(body_force_y_),
           Kernel(n_), grid_size(grid_size_), particles_per_cell(particles_per_cell_), rhs(rhs_) {
 }
 
 
 void ComputeRHSKernel::call_kernel(int blocks, int threads_per_block) {
-    compute_rhs_kernel<<<blocks, threads_per_block>>>(state, material, mass, rhs, grid, n, grid_size, particles_per_cell);
+    compute_rhs_kernel<<<blocks, threads_per_block>>>(state, material, mass, rhs, grid, body_force_x, body_force_y,
+            n, grid_size, particles_per_cell);
 }
 

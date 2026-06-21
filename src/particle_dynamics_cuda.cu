@@ -38,17 +38,41 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 //    size_t grid_size = 16;
 //    grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
 
+    // m*m grid of externally-supplied (e.g. AI) body forces, plus the
+    // occupancy snapshot fed back to that external model. Independent of the
+    // 256x256 collision grid above.
+    force_grid_size = 16;
+    device_body_force_x = DeviceVector<float>(n);
+    device_body_force_y = DeviceVector<float>(n);
+    device_grid_force_x = DeviceVector<float>(force_grid_size * force_grid_size);
+    device_grid_force_y = DeviceVector<float>(force_grid_size * force_grid_size);
+    // Nothing else initializes these, and InterpolateForceKernel reads them
+    // every step starting from the very first take_step() call -- zero is
+    // also the correct "no AI model configured yet" default.
+    CUDA_CHECK(cudaMemset(device_grid_force_x.data(), 0,
+            static_cast<size_t>(force_grid_size) * static_cast<size_t>(force_grid_size) * sizeof(float)));
+    CUDA_CHECK(cudaMemset(device_grid_force_y.data(), 0,
+            static_cast<size_t>(force_grid_size) * static_cast<size_t>(force_grid_size) * sizeof(float)));
+    device_occupancy_grid = DeviceVector<int>(force_grid_size * force_grid_size);
+
     // Create CUDA kernels
     update_grid_kernel = std::make_unique<UpdateGridKernel>(device_grid.data(), device_state.data(),
             n, grid_size, particles_per_cell);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
-            device_mass.data(), device_grid.data(), n, grid_size, particles_per_cell, device_rhs.data());
+            device_mass.data(), device_grid.data(), device_body_force_x.data(), device_body_force_y.data(),
+            n, grid_size, particles_per_cell, device_rhs.data());
     take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt);
 
     device_energy = DeviceVector<float>(1);
     host_energy = HostVector<float>(1);
     energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
             device_mass.data(), n, device_energy.data());
+
+    interpolate_force_kernel = std::make_unique<InterpolateForceKernel>(device_state.data(),
+            device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size,
+            device_body_force_x.data(), device_body_force_y.data());
+    occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
+            device_state.data(), n, force_grid_size);
 }
 
 
@@ -151,6 +175,8 @@ void ParticleDynamicsCUDA::take_step() {
     (*update_grid_kernel)();
     time_update_grid = update_grid_kernel->wall_clock_time();
 
+    (*interpolate_force_kernel)();
+
     (*compute_rhs_kernel)();
     time_compute_rhs = compute_rhs_kernel->wall_clock_time();
 
@@ -176,6 +202,11 @@ bool ParticleDynamicsCUDA::is_stable() {
         }
     }
     return true;
+}
+
+
+void ParticleDynamicsCUDA::update_occupancy_grid() {
+    (*occupancy_grid_kernel)();
 }
 
 
