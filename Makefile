@@ -19,7 +19,8 @@ endif
 # GPU architecture: auto-detect the local GPU at compile time. Override with
 # `make GPU_ARCH=sm_75` for cross-compiling or unusual setups.
 GPU_ARCH ?= native
-cuda_flags = -arch=$(GPU_ARCH)
+# --expt-extended-lambda is required by cuCollections (extended device lambdas)
+cuda_flags = -arch=$(GPU_ARCH) --expt-extended-lambda
 
 $(info Using CXX=$(CXX) CUDA_HOME=$(CUDA_HOME) GPU_ARCH=$(GPU_ARCH))
 
@@ -85,11 +86,19 @@ $(usockets_lib):
 	if [ ! -d external/uWebSockets ]; then git clone --recurse-submodules https://github.com/uNetworking/uWebSockets external/uWebSockets; fi
 	$(MAKE) -C external/uWebSockets/uSockets
 
+# cuCollections is header-only, so there's no build artifact to use as a
+# make target -- use a touch-marker file to track "already cloned" instead.
+cuco_marker = external/cuCollections/.cloned
+
+$(cuco_marker):
+	if [ ! -d external/cuCollections ]; then git clone https://github.com/NVIDIA/cuCollections external/cuCollections; fi
+	touch $(cuco_marker)
+
 .PHONY: deps
-deps: $(glfw_lib) $(gtest_lib) $(usockets_lib)
+deps: $(glfw_lib) $(gtest_lib) $(usockets_lib) $(cuco_marker)
 
 # Paths to includes
-include_paths = $(src_dir) $(CUDA_HOME)/include external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/
+include_paths = $(src_dir) $(CUDA_HOME)/include external/glfw/build/include/ external/glad/include/ external/googletest/build/include external/uWebSockets/src/ external/uWebSockets/uSockets/src/ external/cuCollections/include
 # Warnings
 warnings = -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Wunused -Woverloaded-virtual -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wreorder
 # Compiler flags

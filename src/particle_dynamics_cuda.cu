@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <assert.h>
+#include <algorithm>
 #include <cmath>
 #include "particle_dynamics_cuda.h"
 #include "cuda_check.h"
+#include "grid_map.h"
 
 
 ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
@@ -20,7 +22,20 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     // Create grid
     grid_size = 256;
     particles_per_cell = 10;
-    device_grid = DeviceVector<int>(grid_size * grid_size * particles_per_cell);
+    // Capacity bounds the *number of entries*, not the key's numeric range --
+    // GridMap hashes keys into buckets rather than indexing by key value
+    // directly. particles_in_cell's composite keys range up to
+    // grid_size*grid_size*particles_per_cell, but only ever holds n live
+    // entries (one per particle) at a time, so its capacity is sized off n,
+    // not that key range.
+    size_t num_particles_in_cell_capacity = static_cast<size_t>(2 * std::min(n, grid_size * grid_size)); // bounded by distinct occupied cells
+    size_t particles_in_cell_capacity = static_cast<size_t>(2 * n); // exactly one live entry per particle
+    num_particles_in_cell = std::make_unique<GridMap>(num_particles_in_cell_capacity,
+            cuco::empty_key<int>{kEmptyKeySentinel}, cuco::empty_value<int>{kEmptyValueSentinel},
+            cuda::std::equal_to<int>{}, cuco::linear_probing<1, cuco::default_hash_function<int>>{});
+    particles_in_cell = std::make_unique<GridMap>(particles_in_cell_capacity,
+            cuco::empty_key<int>{kEmptyKeySentinel}, cuco::empty_value<int>{kEmptyValueSentinel},
+            cuda::std::equal_to<int>{}, cuco::linear_probing<1, cuco::default_hash_function<int>>{});
 
     time = 0.0f;
     // I will assign material 0 to be the walls, material 1 to be the snow, and
@@ -56,10 +71,11 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     device_occupancy_grid = DeviceVector<int>(force_grid_size * force_grid_size);
 
     // Create CUDA kernels
-    update_grid_kernel = std::make_unique<UpdateGridKernel>(device_grid.data(), device_state.data(),
-            n, grid_size, particles_per_cell);
+    update_grid_kernel = std::make_unique<UpdateGridKernel>(particles_in_cell.get(), num_particles_in_cell.get(),
+            device_state.data(), n, grid_size, particles_per_cell);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
-            device_mass.data(), device_grid.data(), device_body_force_x.data(), device_body_force_y.data(),
+            device_mass.data(), particles_in_cell.get(), num_particles_in_cell.get(),
+            device_body_force_x.data(), device_body_force_y.data(),
             n, grid_size, particles_per_cell, device_rhs.data());
     take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt);
 

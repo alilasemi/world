@@ -5,6 +5,7 @@
 #include "compute_rhs_kernel.h"
 #include "device_vector.h"
 #include "energy_kernel.h"
+#include "grid_map_fwd.h"
 #include "host_vector.h"
 #include "interpolate_force_kernel.h"
 #include "occupancy_grid_kernel.h"
@@ -30,7 +31,15 @@ public:
     HostVector<float> host_mass;
     DeviceVector<float> device_mass;
 
-    DeviceVector<int> device_grid;
+    // Spatial grid for neighbor lookups, as a pair of hash maps instead of a
+    // dense m*m array so memory scales with particle count rather than grid
+    // resolution. particles_in_cell maps a composite key
+    // (cell_index*particles_per_cell + slot) -> particle index; num_particles_in_cell
+    // maps cell_index -> count. Neither has a default constructor (capacity
+    // is fixed at construction), so these are heap-allocated once n is known
+    // rather than being default-constructed members like the DeviceVectors above.
+    std::unique_ptr<GridMap> particles_in_cell;
+    std::unique_ptr<GridMap> num_particles_in_cell;
 
     DeviceVector<float> device_energy;
     HostVector<float> host_energy;
