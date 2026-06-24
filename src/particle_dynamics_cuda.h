@@ -5,12 +5,11 @@
 #include "compute_rhs_kernel.h"
 #include "device_vector.h"
 #include "energy_kernel.h"
-#include "grid_map_fwd.h"
+#include "find_neighbors_kernel.h"
 #include "host_vector.h"
 #include "interpolate_force_kernel.h"
 #include "occupancy_grid_kernel.h"
 #include "take_step_kernel.h"
-#include "update_grid_kernel.h"
 
 class ParticleDynamicsCUDA {
 public:
@@ -31,15 +30,17 @@ public:
     HostVector<float> host_mass;
     DeviceVector<float> device_mass;
 
-    // Spatial grid for neighbor lookups, as a pair of hash maps instead of a
-    // dense m*m array so memory scales with particle count rather than grid
-    // resolution. particles_in_cell maps a composite key
-    // (cell_index*particles_per_cell + slot) -> particle index; num_particles_in_cell
-    // maps cell_index -> count. Neither has a default constructor (capacity
-    // is fixed at construction), so these are heap-allocated once n is known
-    // rather than being default-constructed members like the DeviceVectors above.
-    std::unique_ptr<GridMap> particles_in_cell;
-    std::unique_ptr<GridMap> num_particles_in_cell;
+    // Flat per-particle neighbor list, populated each step by
+    // FindNeighborsKernel (which does the actual spatial-grid lookup
+    // internally, via cuco hash maps it owns privately) and consumed by
+    // ComputeRHSKernel. Sized n*9*particles_per_cell: 9 = the 3x3 stencil's
+    // cell count, particles_per_cell = worst-case occupancy per cell
+    // (enforced by an overflow assert in FindNeighborsKernel). Each
+    // particle's row is terminated by a -1 sentinel once its neighbors run
+    // out. Neither ParticleDynamicsCUDA nor ComputeRHSKernel ever touch
+    // cuco directly -- that's the point of this flat array as the
+    // interface, instead of passing hash-map handles around.
+    DeviceVector<int> device_neighbors;
 
     DeviceVector<float> device_energy;
     HostVector<float> host_energy;
@@ -103,7 +104,7 @@ public:
     ParticleDynamicsCUDA& operator=(const ParticleDynamicsCUDA&) = delete;
 
 private:
-    std::unique_ptr<UpdateGridKernel> update_grid_kernel;
+    std::unique_ptr<FindNeighborsKernel> find_neighbors_kernel;
     std::unique_ptr<ComputeRHSKernel> compute_rhs_kernel;
     std::unique_ptr<TakeStepKernel> take_step_kernel;
     std::unique_ptr<EnergyKernel> energy_kernel;

@@ -1,5 +1,14 @@
 SHELL := /bin/bash
 
+# Default to parallel builds: independent .cu files (e.g. find_neighbors_kernel.cu,
+# the only one using GridMap/cuco, ~10s to compile thanks to heavy template
+# instantiation in cudafe++/cicc/host gcc) otherwise compile serially for no
+# reason. --output-sync=target keeps each recipe's output contiguous despite
+# running concurrently. Respects an explicit `make -jN` from the command line.
+ifeq ($(filter -j%,$(MAKEFLAGS)),)
+MAKEFLAGS += -j$(shell nproc) --output-sync=target
+endif
+
 # -- Environment checks -- #
 ifneq ($(shell uname -s),Linux)
 $(error This Makefile currently only supports Linux (uses X11/GLX linker flags). Detected: $(shell uname -s))
@@ -40,7 +49,7 @@ test_obj_dir = $(build_dir)/obj
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
 list_of_cpp_files = color_map particle_drawer
-list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics_cuda update_grid_kernel take_step_kernel energy_kernel interpolate_force_kernel occupancy_grid_kernel
+list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics_cuda find_neighbors_kernel take_step_kernel energy_kernel interpolate_force_kernel occupancy_grid_kernel
 # Sources
 CPP_SRCS := $(addprefix $(src_dir)/, $(list_of_cpp_files:=.cpp))
 CU_SRCS  := $(addprefix $(src_dir)/, $(list_of_cuda_files:=.cu))

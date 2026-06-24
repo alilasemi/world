@@ -1,10 +1,8 @@
 #include <stdio.h>
 #include <assert.h>
-#include <algorithm>
 #include <cmath>
 #include "particle_dynamics_cuda.h"
 #include "cuda_check.h"
-#include "grid_map.h"
 
 
 ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
@@ -20,22 +18,13 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     unpack_state();
 
     // Create grid
-    grid_size = 256;
-    particles_per_cell = 10;
-    // Capacity bounds the *number of entries*, not the key's numeric range --
-    // GridMap hashes keys into buckets rather than indexing by key value
-    // directly. particles_in_cell's composite keys range up to
-    // grid_size*grid_size*particles_per_cell, but only ever holds n live
-    // entries (one per particle) at a time, so its capacity is sized off n,
-    // not that key range.
-    size_t num_particles_in_cell_capacity = static_cast<size_t>(2 * std::min(n, grid_size * grid_size)); // bounded by distinct occupied cells
-    size_t particles_in_cell_capacity = static_cast<size_t>(2 * n); // exactly one live entry per particle
-    num_particles_in_cell = std::make_unique<GridMap>(num_particles_in_cell_capacity,
-            cuco::empty_key<int>{kEmptyKeySentinel}, cuco::empty_value<int>{kEmptyValueSentinel},
-            cuda::std::equal_to<int>{}, cuco::linear_probing<1, cuco::default_hash_function<int>>{});
-    particles_in_cell = std::make_unique<GridMap>(particles_in_cell_capacity,
-            cuco::empty_key<int>{kEmptyKeySentinel}, cuco::empty_value<int>{kEmptyValueSentinel},
-            cuda::std::equal_to<int>{}, cuco::linear_probing<1, cuco::default_hash_function<int>>{});
+    grid_size = 32;
+    particles_per_cell = 64;
+    // 9 = the 3x3 stencil's cell count; particles_per_cell = worst-case
+    // occupancy per cell (see FindNeighborsKernel's overflow assert). This
+    // is the only place that needs to know about the spatial grid at all --
+    // FindNeighborsKernel owns the actual cuco hash maps privately.
+    device_neighbors = DeviceVector<int>(static_cast<size_t>(n) * 9 * static_cast<size_t>(particles_per_cell));
 
     time = 0.0f;
     // I will assign material 0 to be the walls, material 1 to be the snow, and
@@ -71,12 +60,12 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     device_occupancy_grid = DeviceVector<int>(force_grid_size * force_grid_size);
 
     // Create CUDA kernels
-    update_grid_kernel = std::make_unique<UpdateGridKernel>(particles_in_cell.get(), num_particles_in_cell.get(),
-            device_state.data(), n, grid_size, particles_per_cell);
+    find_neighbors_kernel = std::make_unique<FindNeighborsKernel>(
+            device_state.data(), n, grid_size, particles_per_cell, device_neighbors.data());
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
-            device_mass.data(), particles_in_cell.get(), num_particles_in_cell.get(),
+            device_mass.data(), device_neighbors.data(),
             device_body_force_x.data(), device_body_force_y.data(),
-            n, grid_size, particles_per_cell, device_rhs.data());
+            n, particles_per_cell, device_rhs.data());
     take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt);
 
     device_energy = DeviceVector<float>(1);
@@ -188,8 +177,8 @@ void ParticleDynamicsCUDA::stop_timer(float& elapsed_time) {
 
 
 void ParticleDynamicsCUDA::take_step() {
-    (*update_grid_kernel)();
-    time_update_grid = update_grid_kernel->wall_clock_time();
+    (*find_neighbors_kernel)();
+    time_update_grid = find_neighbors_kernel->wall_clock_time();
 
     (*interpolate_force_kernel)();
 

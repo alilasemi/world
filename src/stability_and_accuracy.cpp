@@ -16,7 +16,7 @@ constexpr float kSimTime = 0.1f;
 
 // Runs a single dt to t = kSimTime and writes "<energy> <stable 0/1>" to
 // out_path. Runs in a child process -- if a CUDA error aborts the process
-// (e.g. UpdateGridKernel's grid-overflow assert under a too-large dt), only
+// (e.g. FindNeighborsKernel's grid-overflow assert under a too-large dt), only
 // this child dies, not the whole sweep.
 void run_child(float dt, const char* out_path) {
     ParticleDynamicsCUDA sim;

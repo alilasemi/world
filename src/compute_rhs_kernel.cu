@@ -1,14 +1,11 @@
 #include <stdio.h>
 #include <assert.h>
 #include "compute_rhs_kernel.h"
-#include "grid_map.h"
 
 
-template <typename ParticlesRef, typename CountRef>
 __global__ void compute_rhs_kernel(const float* state, const int* material,
-        const float* mass, float* rhs, ParticlesRef particles_in_cell_ref, CountRef num_particles_in_cell_ref,
-        const float* body_force_x, const float* body_force_y,
-        size_t n, int grid_size, int particles_per_cell) {
+        const float* mass, float* rhs, const int* neighbors, const float* body_force_x, const float* body_force_y,
+        size_t n, int particles_per_cell) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
@@ -18,6 +15,7 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
     float right_wall_x = 1.0f;
     float max_force = 100.f;
     float radius = .01f;
+    int row_stride = 9 * particles_per_cell;
     for (int i = index; i < n; i += stride) {
         const float x = state[4 * i + 0];
         const float y = state[4 * i + 1];
@@ -46,47 +44,28 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         force_x -= right_wall_force; // Repulsive force
         force_x -= right_wall_force * vx; // Damping based on velocity
 
-        // Particle-particle interactions using the spatial grid
-        int cell_x = min(grid_size - 1, max(0, static_cast<int>((x + 1.0f) / 2.0f * grid_size)));
-        int cell_y = min(grid_size - 1, max(0, static_cast<int>((y + 1.0f) / 2.0f * grid_size)));
-        for (int dx = -1; dx <= 1; ++dx) {
-            for (int dy = -1; dy <= 1; ++dy) {
-                int neighbor_cell_x = cell_x + dx;
-                int neighbor_cell_y = cell_y + dy;
-                if (neighbor_cell_x >= 0 && neighbor_cell_x < grid_size && neighbor_cell_y >= 0 && neighbor_cell_y < grid_size) {
-                    int cell_index = neighbor_cell_x * grid_size + neighbor_cell_y;
-                    auto count_iter = num_particles_in_cell_ref.find(cell_index);
-                    // A cell with no particles was never inserted this step --
-                    // not found means count 0, not an uninitialized read.
-                    int count = (count_iter == num_particles_in_cell_ref.end()) ? 0 : count_iter->second;
-                    for (int slot = 0; slot < count; ++slot) {
-                        auto particle_iter = particles_in_cell_ref.find(cell_index * particles_per_cell + slot);
-                        // Should always be found: count came from the same
-                        // populate pass that wrote exactly `count` entries
-                        // for this cell_index.
-                        assert(particle_iter != particles_in_cell_ref.end());
-                        int j = particle_iter->second;
-                        if (i != j) {
-                            const float x_j = state[4 * j + 0];
-                            const float y_j = state[4 * j + 1];
-                            const float vx_j = state[4 * j + 2];
-                            const float vy_j = state[4 * j + 3];
-                            const float dx = x - x_j;
-                            const float dy = y - y_j;
-                            const float norm = sqrtf(dx * dx + dy * dy);
-                            const float dist = norm - radius - radius;
-                            const size_t mat_j = material[j];
-                            // Repulsive force
-                            float force = max(0.f, min(max_force, -max_force / radius * dist));
-                            force_y += force * (dy / norm);
-                            force_x += force * (dx / norm);
-                            // Damping based on relative velocity
-                            force_x -= force * (vx - vx_j);
-                            force_y -= force * (vy - vy_j);
-                        }
-                    }
-                }
-            }
+        // Particle-particle interactions, from the flat neighbor list that
+        // FindNeighborsKernel already computed via the spatial grid.
+        int base = i * row_stride;
+        for (int k = 0; k < row_stride; ++k) {
+            int j = neighbors[base + k];
+            if (j < 0) break; // sentinel: no more neighbors for this particle
+            const float x_j = state[4 * j + 0];
+            const float y_j = state[4 * j + 1];
+            const float vx_j = state[4 * j + 2];
+            const float vy_j = state[4 * j + 3];
+            const float dx = x - x_j;
+            const float dy = y - y_j;
+            const float norm = sqrtf(dx * dx + dy * dy);
+            const float dist = norm - radius - radius;
+            const size_t mat_j = material[j];
+            // Repulsive force
+            float force = max(0.f, min(max_force, -max_force / radius * dist));
+            force_y += force * (dy / norm);
+            force_x += force * (dx / norm);
+            // Damping based on relative velocity
+            force_x -= force * (vx - vx_j);
+            force_y -= force * (vy - vy_j);
         }
 
         // Externally-supplied (e.g. AI-predicted) body force, already
@@ -106,19 +85,15 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
 
 ComputeRHSKernel::ComputeRHSKernel(const float* state_, const int* material_, const float* mass_,
-            GridMap* particles_in_cell_, GridMap* num_particles_in_cell_,
-            const float* body_force_x_, const float* body_force_y_,
-            const int n_, const int grid_size_, const int particles_per_cell_, float* rhs_)
-        : state(state_), material(material_), mass(mass_), particles_in_cell(particles_in_cell_),
-          num_particles_in_cell(num_particles_in_cell_), body_force_x(body_force_x_), body_force_y(body_force_y_),
-          Kernel(n_), grid_size(grid_size_), particles_per_cell(particles_per_cell_), rhs(rhs_) {
+            const int* neighbors_, const float* body_force_x_, const float* body_force_y_,
+            const int n_, const int particles_per_cell_, float* rhs_)
+        : Kernel(n_), state(state_), material(material_), mass(mass_), neighbors(neighbors_),
+          body_force_x(body_force_x_), body_force_y(body_force_y_),
+          particles_per_cell(particles_per_cell_), rhs(rhs_) {
 }
 
 
 void ComputeRHSKernel::call_kernel(int blocks, int threads_per_block) {
-    auto particles_in_cell_ref = particles_in_cell->ref(cuco::find);
-    auto num_particles_in_cell_ref = num_particles_in_cell->ref(cuco::find);
     compute_rhs_kernel<<<blocks, threads_per_block>>>(state, material, mass, rhs,
-            particles_in_cell_ref, num_particles_in_cell_ref, body_force_x, body_force_y,
-            n, grid_size, particles_per_cell);
+            neighbors, body_force_x, body_force_y, n, particles_per_cell);
 }
