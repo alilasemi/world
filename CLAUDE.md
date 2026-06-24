@@ -42,10 +42,10 @@ Open `http://localhost:8080` in a browser. The page hits `/config` to learn `mod
 
 `src/broadcast.cpp` (compiled to `build/bin/world`) owns a `uWS::App` on port 8081 and a single `unique_ptr<ParticleDynamicsCUDA>` sim instance (one sim per process, recreated on `"initialize"`). The protocol is a simple text-command / binary-response exchange:
 
-- Client sends `"initialize"` -> server allocates a new `ParticleDynamicsCUDA`, sends back `int32 n` then `n*2` floats of initial `(x, y)` state.
+- Client sends `"initialize"` -> server allocates a new `ParticleDynamicsCUDA`, sends back `int32 n`, then `int32 grid_size` (so the client can draw the spatial grid overlay — see "Rendering" below), then `n*2` floats of initial `(x, y)` state.
 - Client sends `"run"` -> server calls `sim->take_step()` 10x, unpacks state, sends back the updated `(x, y)` float buffer.
 
-The client (`client/webgl_demo.js`, `Client` class) mirrors this as a small state machine: `state 0` (waiting for `n`) -> `state 1` (waiting for IC) -> `state 2+` (steady loop: draw, render, request next `"run"`). `client/index.js` is unrelated to the sim — it's just the Express static file/`,/config` server.
+The client (`client/world.js`, `Client` class) mirrors this as a small state machine: `state 0` (waiting for `n`) -> `state 1` (waiting for `grid_size`) -> `state 2` (waiting for IC) -> `state 3+` (steady loop: draw, render, request next `"run"`). `client/index.js` is unrelated to the sim — it's just the Express static file/`,/config` server.
 
 `src/profiling_sim.cpp` is an alternate driver entry point (no WebSocket) that runs `ParticleDynamicsCUDA` directly and prints timings — useful for profiling/debugging without spinning up the client. `test/particle_dynamics_cuda_test.cpp` drives `ParticleDynamicsCUDA` the same way, under GoogleTest (see "Testing" below).
 
@@ -92,7 +92,9 @@ Tests mutate `sim.host_state[...]`/`sim.device_grid_force_y` etc. directly (all 
 
 ### Rendering
 
-`ParticleDrawer` (`src/particle_drawer.{h,cpp}` and its hand-ported JS twin in `client/webgl_demo.js`) turns each particle's `(x, y)` into a small N-gon (fan of `num_triangles` triangles around a center point) for rasterization — geometry generation logic must be kept in sync between the C++ and JS versions if changed. `src/shader.h` is an unused native-OpenGL GLFW-era shader helper; the actual rendering path is the WebGL2/JS one in `client/`.
+`ParticleDrawer` (`src/particle_drawer.{h,cpp}` and its hand-ported JS twin in `client/world.js`) turns each particle's `(x, y)` into a small N-gon (fan of `num_triangles` triangles around a center point) for rasterization — geometry generation logic must be kept in sync between the C++ and JS versions if changed. `src/shader.h` is an unused native-OpenGL GLFW-era shader helper; the actual rendering path is the WebGL2/JS one in `client/`.
+
+`Graphics` (in `client/world.js`) also draws a red gridline overlay for the spatial collision grid (`grid_size`, distinct from the 16x16 AI-control force/occupancy grid above): `buildGridLineVertices(gridSize)` builds static line-segment geometry once per `setup()` (the grid doesn't move, unlike particles), drawn via a second minimal `Shader` (position-only attribute, hardcoded red fragment output, no per-vertex color needed) and `gl.drawArrays(gl.LINES, ...)` before the particle draw call so particles render on top. `grid_size` is sent from the server over the WS protocol (see above) rather than hardcoded client-side, specifically to avoid a third copy of a magic number that's already manually duplicated once (C++ `ParticleDynamicsCUDA` constructor) — the whole point of the overlay is to reflect the *actual* running simulation's grid.
 
 ## Known issues
 

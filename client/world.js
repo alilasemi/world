@@ -3,52 +3,16 @@ class Shader {
     gl;
     program;
 
-    constructor(gl, vertexPath, fragmentPath) {
+    constructor(gl, vertexSource, fragmentSource) {
         this.gl = gl;
-        this.loadShader(vertexPath, fragmentPath);
+        this.loadShader(vertexSource, fragmentSource);
     }
 
-    loadShader(vertexPath, fragmentPath) {
-        try {
-//            const vertexCode = fs.readFileSync(vertexPath, 'utf8');
-//            const fragmentCode = fs.readFileSync(fragmentPath, 'utf8');
-            // TODO: Ran into some issues reading from files, so hardcoding shader code for now
-            const vertexCode = `#version 300 es
+    loadShader(vertexSource, fragmentSource) {
+        const vertexShader = this.compileShader(vertexSource, this.gl.VERTEX_SHADER);
+        const fragmentShader = this.compileShader(fragmentSource, this.gl.FRAGMENT_SHADER);
 
-                precision highp float;
-
-                layout (location = 0) in vec3 aPos;
-                layout (location = 1) in vec3 aColor;
-
-                out vec3 ourColor;
-
-                void main()
-                {
-                    gl_Position = vec4(aPos, 1.0f);
-                    ourColor = aColor;
-                }
-            `;
-            const fragmentCode = `#version 300 es
-
-                precision highp float;
-
-                out vec4 FragColor;
-
-                in vec3 ourColor;
-
-                void main()
-                {
-                    FragColor = vec4(ourColor, 1.0f);
-                }
-            `;
-
-            const vertexShader = this.compileShader(vertexCode, this.gl.VERTEX_SHADER);
-            const fragmentShader = this.compileShader(fragmentCode, this.gl.FRAGMENT_SHADER);
-
-            this.createProgram(vertexShader, fragmentShader);
-        } catch (error) {
-            console.error("ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: ", error);
-        }
+        this.createProgram(vertexShader, fragmentShader);
     }
 
     compileShader(source, type) {
@@ -90,6 +54,80 @@ class Shader {
         }
         this.gl.useProgram(this.program);
     }
+}
+
+const particleVertexSource = `#version 300 es
+
+    precision highp float;
+
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aColor;
+
+    out vec3 ourColor;
+
+    void main()
+    {
+        gl_Position = vec4(aPos, 1.0f);
+        ourColor = aColor;
+    }
+`;
+const particleFragmentSource = `#version 300 es
+
+    precision highp float;
+
+    out vec4 FragColor;
+
+    in vec3 ourColor;
+
+    void main()
+    {
+        FragColor = vec4(ourColor, 1.0f);
+    }
+`;
+
+// Grid lines are a fixed red, so unlike the particle shader, no per-vertex
+// color attribute is needed.
+const gridVertexSource = `#version 300 es
+
+    precision highp float;
+
+    layout (location = 0) in vec3 aPos;
+
+    void main()
+    {
+        gl_Position = vec4(aPos, 1.0f);
+    }
+`;
+const gridFragmentSource = `#version 300 es
+
+    precision highp float;
+
+    out vec4 FragColor;
+
+    void main()
+    {
+        FragColor = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    }
+`;
+
+// Builds vertex positions for the gridSize x gridSize spatial grid's
+// cell-boundary lines, covering the [-1,1]x[-1,1] world domain that particle
+// positions already live in (no projection/camera transform anywhere in
+// this client, so these need no transform either). Static geometry -- built
+// once, not regenerated per frame like ParticleDrawer.draw().
+function buildGridLineVertices(gridSize) {
+    const vertices = new Float32Array(4 * (gridSize + 1) * 3);
+    let offset = 0;
+    for (let i = 0; i <= gridSize; ++i) {
+        const t = -1.0 + 2.0 * i / gridSize;
+        // Horizontal line at y = t, spanning x in [-1, 1]
+        vertices[offset++] = -1.0; vertices[offset++] = t; vertices[offset++] = 0.0;
+        vertices[offset++] = 1.0; vertices[offset++] = t; vertices[offset++] = 0.0;
+        // Vertical line at x = t, spanning y in [-1, 1]
+        vertices[offset++] = t; vertices[offset++] = -1.0; vertices[offset++] = 0.0;
+        vertices[offset++] = t; vertices[offset++] = 1.0; vertices[offset++] = 0.0;
+    }
+    return vertices;
 }
 
 
@@ -145,8 +183,12 @@ class Graphics {
     drawer;
     shader;
     colors;
+    VBO_grid;
+    VAO_grid;
+    gridShader;
+    gridVertexCount;
 
-    constructor(drawer) {
+    constructor(drawer, gridSize) {
         this.drawer = drawer;
         const canvas = document.querySelector("#gl-canvas");
         // Initialize the GL context
@@ -161,7 +203,8 @@ class Graphics {
         }
 
         // Create shader
-        this.shader = new Shader(gl, "vertex.glsl", "fragment.glsl");
+        this.shader = new Shader(gl, particleVertexSource, particleFragmentSource);
+        this.gridShader = new Shader(gl, gridVertexSource, gridFragmentSource);
 
         // Set clear color to black, fully opaque
         gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -191,6 +234,18 @@ class Graphics {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Int32Array(this.drawer.triangles), gl.STATIC_DRAW);
 
         this.colors = new Float32Array(this.drawer.node_coords.length).fill(1.0);
+
+        // Grid lines: static geometry (built once here, not per frame), no
+        // color attribute needed since the grid shader hardcodes red.
+        const gridVertices = buildGridLineVertices(gridSize);
+        this.gridVertexCount = gridVertices.length / 3;
+        this.VAO_grid = gl.createVertexArray();
+        this.VBO_grid = gl.createBuffer();
+        gl.bindVertexArray(this.VAO_grid);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_grid);
+        gl.bufferData(gl.ARRAY_BUFFER, gridVertices, gl.STATIC_DRAW);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+        gl.enableVertexAttribArray(0);
         // Render loop
 
 //        render();
@@ -217,6 +272,11 @@ class Graphics {
         gl.clearColor(0.2, 0.2, 0.2, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
+        // Render the grid first so particles draw on top of it
+        this.gridShader.use();
+        gl.bindVertexArray(this.VAO_grid);
+        gl.drawArrays(gl.LINES, 0, this.gridVertexCount);
+
         // Render the particles
         this.shader.use();
         gl.bindVertexArray(this.VAO);
@@ -238,6 +298,7 @@ class Client {
     socket;
     state;
     n;
+    gridSize;
     xy;
     drawer;
     graphics;
@@ -282,6 +343,12 @@ class Client {
             console.log('Received n from server: ', this.n);
             ++this.state;
         } else if (this.state == 1) {
+            // Read spatial grid resolution (for drawing the grid overlay)
+            const dataView = new DataView(event.data);
+            this.gridSize = dataView.getInt32(0, true);
+            console.log('Received gridSize from server: ', this.gridSize);
+            ++this.state;
+        } else if (this.state == 2) {
             // Read initial condition
             const dataView = new DataView(event.data);
             this.xy = new Float32Array(event.data);
@@ -313,7 +380,7 @@ class Client {
         this.drawer = new ParticleDrawer(this.n, 20);
         this.drawer.draw(this.xy)
         // Set up graphics
-        this.graphics = new Graphics(this.drawer);
+        this.graphics = new Graphics(this.drawer, this.gridSize);
         console.log("Initialized graphics");
         this.graphics.render();
     }

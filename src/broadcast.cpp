@@ -27,6 +27,11 @@ int main() {
                     const char* size_data = reinterpret_cast<const char*>(&size);
                     size_t length = sizeof(size);
                     ws->send(std::string_view(size_data, length), uWS::OpCode::BINARY);
+                    // Send grid_size so the client can draw the spatial grid
+                    int32_t grid_size = sim->grid_size;
+                    const char* grid_size_data = reinterpret_cast<const char*>(&grid_size);
+                    length = sizeof(grid_size);
+                    ws->send(std::string_view(grid_size_data, length), uWS::OpCode::BINARY);
                     // Send state vector, sim.xy, which is vector<float>
                     const char* state_data = reinterpret_cast<const char*>(sim->xy.data());
                     length = sim->xy.size() * sizeof(float);
