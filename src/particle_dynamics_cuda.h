@@ -65,11 +65,7 @@ public:
     // update_occupancy_grid() is called -- not part of take_step().
     DeviceVector<int> device_occupancy_grid;
 
-    // Timing (per-frame; reset/accumulated in broadcast.cpp each run)
-    float time_update_grid = 0.f;
-    float time_interpolate_force = 0.f;
-    float time_compute_rhs = 0.f;
-    float time_take_step = 0.f;
+    // Timing
     float time_unpack_state = 0.f;
     cudaEvent_t start_event, stop_event;
     void start_timer();
@@ -82,6 +78,13 @@ public:
 
     void unpack_state();
     float get_real_time_ratio();
+
+    // Lifetime-accumulated wall-clock times for each kernel (ms).
+    // Take before/after deltas to get per-frame costs.
+    float find_neighbors_wct()    const;
+    float interpolate_force_wct() const;
+    float compute_rhs_wct()       const;
+    float take_step_wct()         const;
 
 
     void initialize_to_two_particles(const float x0, const float y0);

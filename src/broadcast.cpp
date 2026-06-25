@@ -37,16 +37,19 @@ int main() {
                     length = sim->xy.size() * sizeof(float);
                     ws->send(std::string_view(state_data, length), uWS::OpCode::BINARY);
                 } else if (message == "run") {
-                    // Accumulate per-kernel times over all steps so the client
-                    // gets a full-frame total, not just the last step's time.
-                    float t_find = 0.f, t_interp = 0.f, t_rhs = 0.f, t_step = 0.f;
-                    for (int steps = 0; steps < 10; ++steps) {
+                    // Kernel::wall_clock_time() is a lifetime accumulator, so
+                    // snapshot before and after to get this frame's total.
+                    float find0  = sim->find_neighbors_wct();
+                    float interp0 = sim->interpolate_force_wct();
+                    float rhs0   = sim->compute_rhs_wct();
+                    float step0  = sim->take_step_wct();
+                    for (int steps = 0; steps < 100; ++steps) {
                         sim->take_step();
-                        t_find  += sim->time_update_grid;
-                        t_interp += sim->time_interpolate_force;
-                        t_rhs   += sim->time_compute_rhs;
-                        t_step  += sim->time_take_step;
                     }
+                    float t_find  = sim->find_neighbors_wct()  - find0;
+                    float t_interp = sim->interpolate_force_wct() - interp0;
+                    float t_rhs   = sim->compute_rhs_wct()   - rhs0;
+                    float t_step  = sim->take_step_wct()  - step0;
                     sim->unpack_state();
                     // Pack xy + metadata into one buffer.
                     // Layout: [n*2 xy floats | sim_time | real_time_ratio |

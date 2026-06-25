@@ -197,17 +197,10 @@ float ParticleDynamicsCUDA::get_real_time_ratio() {
 
 void ParticleDynamicsCUDA::take_step() {
     (*find_neighbors_kernel)();
-    time_update_grid = find_neighbors_kernel->wall_clock_time();
-
     (*interpolate_force_kernel)();
-    time_interpolate_force = interpolate_force_kernel->wall_clock_time();
-
     (*compute_rhs_kernel)();
-    time_compute_rhs = compute_rhs_kernel->wall_clock_time();
-
     take_step_kernel->set_dt(dt);
     (*take_step_kernel)();
-    time_take_step = take_step_kernel->wall_clock_time();
     time += dt;
 }
 
@@ -235,5 +228,10 @@ void ParticleDynamicsCUDA::update_occupancy_grid() {
     (*occupancy_grid_kernel)();
 }
 
+
+float ParticleDynamicsCUDA::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
+float ParticleDynamicsCUDA::interpolate_force_wct() const { return interpolate_force_kernel->wall_clock_time(); }
+float ParticleDynamicsCUDA::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }
+float ParticleDynamicsCUDA::take_step_wct()         const { return take_step_kernel->wall_clock_time(); }
 
 ParticleDynamicsCUDA::~ParticleDynamicsCUDA() = default;
