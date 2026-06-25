@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <cmath>
+#include <chrono>
 #include "particle_dynamics_cuda.h"
 #include "cuda_check.h"
 
@@ -27,6 +28,9 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     device_neighbors = DeviceVector<int>(static_cast<size_t>(n) * 9 * static_cast<size_t>(particles_per_cell));
 
     time = 0.0f;
+    last_time = 0.0f;
+    last_wall_clock_time = std::chrono::steady_clock::now();
+    real_time_ratio = 0.0f;
     // I will assign material 0 to be the walls, material 1 to be the snow, and
     // material 2 to be the sled
     host_mass = HostVector<float>(3);
@@ -106,6 +110,7 @@ void ParticleDynamicsCUDA::unpack_state() {
         xy[2*i + 1] = host_state[4 * i + 1];
     }
     stop_timer(time_unpack_state);
+    real_time_ratio = get_real_time_ratio();
 }
 
 
@@ -176,6 +181,19 @@ void ParticleDynamicsCUDA::stop_timer(float& elapsed_time) {
 }
 
 
+float ParticleDynamicsCUDA::get_real_time_ratio() {
+    auto now = std::chrono::steady_clock::now();
+    double wall_delta = std::chrono::duration<double>(now - last_wall_clock_time).count();
+    float ratio = 0.0f;
+    if (wall_delta > 0.0) {
+        ratio = (time - last_time) / static_cast<float>(wall_delta);
+    }
+    last_time = time;
+    last_wall_clock_time = now;
+    return ratio;
+}
+
+
 void ParticleDynamicsCUDA::take_step() {
     (*find_neighbors_kernel)();
     time_update_grid = find_neighbors_kernel->wall_clock_time();
@@ -188,6 +206,7 @@ void ParticleDynamicsCUDA::take_step() {
     take_step_kernel->set_dt(dt);
     (*take_step_kernel)();
     time_take_step = take_step_kernel->wall_clock_time();
+    time += dt;
 }
 
 float ParticleDynamicsCUDA::compute_total_energy() {

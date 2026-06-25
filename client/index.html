@@ -9,6 +9,16 @@
                 width: 30px;
                 height: 30px;
             }
+            #hud {
+                position: absolute;
+                top: 60px;
+                left: 10px;
+                color: white;
+                font-family: monospace;
+                font-size: 14px;
+                pointer-events: none;
+                text-shadow: 1px 1px 2px black;
+            }
         </style>
     </head>
 
@@ -17,5 +27,9 @@
 
     <body>
         <canvas id="gl-canvas" width="900" height="900"></canvas>
+        <div id="hud">
+            <div id="hud-sim-time">Sim time: —</div>
+            <div id="hud-rt-ratio">Realtime ratio: —</div>
+        </div>
     </body>
 </html>

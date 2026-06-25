@@ -1,5 +1,6 @@
 #include <vector>
 #include <memory>
+#include <chrono>
 #include <cuda_runtime.h>
 
 #include "compute_rhs_kernel.h"
@@ -14,6 +15,9 @@
 class ParticleDynamicsCUDA {
 public:
     float time;
+    float last_time;
+    std::chrono::steady_clock::time_point last_wall_clock_time;
+    float real_time_ratio;
     int n;
     float dt;
     int grid_size;
@@ -76,6 +80,7 @@ public:
     void resize(const int new_n);
 
     void unpack_state();
+    float get_real_time_ratio();
 
 
     void initialize_to_two_particles(const float x0, const float y0);

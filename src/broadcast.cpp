@@ -42,8 +42,13 @@ int main() {
                         sim->take_step();
                     }
                     sim->unpack_state();
-                    const char* state_data = reinterpret_cast<const char*>(sim->xy.data());
-                    size_t length = sim->xy.size() * sizeof(float);
+                    // Pack xy + [sim time, real-time ratio] into one buffer
+                    std::vector<float> payload(sim->xy.size() + 2);
+                    std::copy(sim->xy.begin(), sim->xy.end(), payload.begin());
+                    payload[sim->xy.size() + 0] = sim->time;
+                    payload[sim->xy.size() + 1] = sim->real_time_ratio;
+                    const char* state_data = reinterpret_cast<const char*>(payload.data());
+                    size_t length = payload.size() * sizeof(float);
                     ws->send(std::string_view(state_data, length), uWS::OpCode::BINARY);
                 } else {
                     std::cout << "Unknown message: " << message << std::endl;

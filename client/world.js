@@ -304,11 +304,15 @@ class Client {
     graphics;
     mode;
     ip;
+    hudSimTime;
+    hudRtRatio;
 
     constructor(mode, ip) {
         this.state = 0;
         this.mode = mode;
         this.ip = ip;
+        this.hudSimTime = document.getElementById('hud-sim-time');
+        this.hudRtRatio = document.getElementById('hud-rt-ratio');
 
         // Connect to the websocket server
         console.log("Running in " + mode + " mode.");
@@ -363,9 +367,13 @@ class Client {
                 this.socket.send('initialize');
                 restartButton.checked = false;
             } else {
-                // Read new state
-                const dataView = new DataView(event.data);
-                this.xy.set(new Float32Array(event.data));
+                // Payload is n*2 xy floats + [simTime, realTimeRatio]
+                const floats = new Float32Array(event.data);
+                this.xy.set(floats.subarray(0, this.n * 2));
+                const simTime = floats[this.n * 2];
+                const rtRatio = floats[this.n * 2 + 1];
+                this.hudSimTime.textContent = `Sim time: ${simTime.toFixed(4)} s`;
+                this.hudRtRatio.textContent = `Realtime ratio: ${rtRatio.toFixed(2)}×`;
                 console.log('Received new state from server: ', this.xy);
                 this.drawer.draw(this.xy);
                 this.graphics.render();
