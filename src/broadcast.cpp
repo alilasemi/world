@@ -43,7 +43,7 @@ int main() {
                     float interp0 = sim->interpolate_force_wct();
                     float rhs0   = sim->compute_rhs_wct();
                     float step0  = sim->take_step_wct();
-                    for (int steps = 0; steps < 100; ++steps) {
+                    for (int steps = 0; steps < 10; ++steps) {
                         sim->take_step();
                     }
                     float t_find  = sim->find_neighbors_wct()  - find0;
