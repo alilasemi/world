@@ -65,8 +65,9 @@ public:
     // update_occupancy_grid() is called -- not part of take_step().
     DeviceVector<int> device_occupancy_grid;
 
-    // Timing
+    // Timing (per-frame; reset/accumulated in broadcast.cpp each run)
     float time_update_grid = 0.f;
+    float time_interpolate_force = 0.f;
     float time_compute_rhs = 0.f;
     float time_take_step = 0.f;
     float time_unpack_state = 0.f;

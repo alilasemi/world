@@ -98,6 +98,7 @@ void ParticleDynamicsCUDA::resize(const int new_n) {
 
 
 void ParticleDynamicsCUDA::unpack_state() {
+    time_unpack_state = 0.f;
     start_timer();
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -199,6 +200,7 @@ void ParticleDynamicsCUDA::take_step() {
     time_update_grid = find_neighbors_kernel->wall_clock_time();
 
     (*interpolate_force_kernel)();
+    time_interpolate_force = interpolate_force_kernel->wall_clock_time();
 
     (*compute_rhs_kernel)();
     time_compute_rhs = compute_rhs_kernel->wall_clock_time();

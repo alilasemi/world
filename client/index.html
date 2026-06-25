@@ -15,9 +15,11 @@
                 left: 10px;
                 color: white;
                 font-family: monospace;
-                font-size: 14px;
+                font-size: 13px;
                 pointer-events: none;
                 text-shadow: 1px 1px 2px black;
+                line-height: 1.5;
+                white-space: pre;
             }
         </style>
     </head>
@@ -27,9 +29,6 @@
 
     <body>
         <canvas id="gl-canvas" width="900" height="900"></canvas>
-        <div id="hud">
-            <div id="hud-sim-time">Sim time: —</div>
-            <div id="hud-rt-ratio">Realtime ratio: —</div>
-        </div>
+        <div id="hud"></div>
     </body>
 </html>

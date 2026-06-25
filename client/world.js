@@ -294,6 +294,14 @@ class Graphics {
 }
 
 
+// Format a time (ms) and its percentage of total as a fixed-width string
+// for the monospace HUD. nameWidth controls the label column width.
+function fmtRow(label, ms, pct, indent = '') {
+    const msStr = ms.toFixed(1).padStart(7);
+    const pctStr = `(${pct.toFixed(1)}%)`.padStart(8);
+    return `${indent}${label.padEnd(20 - indent.length)}${msStr} ms ${pctStr}`;
+}
+
 class Client {
     socket;
     state;
@@ -304,15 +312,15 @@ class Client {
     graphics;
     mode;
     ip;
-    hudSimTime;
-    hudRtRatio;
+    hud;
+    lastFrameStart;   // performance.now() at start of previous steady-state message
 
     constructor(mode, ip) {
         this.state = 0;
         this.mode = mode;
         this.ip = ip;
-        this.hudSimTime = document.getElementById('hud-sim-time');
-        this.hudRtRatio = document.getElementById('hud-rt-ratio');
+        this.hud = document.getElementById('hud');
+        this.lastFrameStart = null;
 
         // Connect to the websocket server
         console.log("Running in " + mode + " mode.");
@@ -364,20 +372,71 @@ class Client {
             const restartButton = document.getElementById("restartButton");
             if (restartButton.checked) {
                 this.state = 0;
+                this.lastFrameStart = null;
                 this.socket.send('initialize');
                 restartButton.checked = false;
             } else {
-                // Payload is n*2 xy floats + [simTime, realTimeRatio]
+                const frameStart = performance.now();
+                const frameTime = this.lastFrameStart !== null
+                    ? frameStart - this.lastFrameStart : null;
+
+                // Parse payload:
+                // [n*2 xy | sim_time | real_time_ratio |
+                //  t_find_neighbors | t_interpolate_force |
+                //  t_compute_rhs | t_take_step | t_unpack_state]
                 const floats = new Float32Array(event.data);
-                this.xy.set(floats.subarray(0, this.n * 2));
-                const simTime = floats[this.n * 2];
-                const rtRatio = floats[this.n * 2 + 1];
-                this.hudSimTime.textContent = `Sim time: ${simTime.toFixed(4)} s`;
-                this.hudRtRatio.textContent = `Realtime ratio: ${rtRatio.toFixed(2)}×`;
-                console.log('Received new state from server: ', this.xy);
+                const base = this.n * 2;
+                this.xy.set(floats.subarray(0, base));
+                const simTime    = floats[base + 0];
+                const rtRatio    = floats[base + 1];
+                const tFind      = floats[base + 2];
+                const tInterp    = floats[base + 3];
+                const tRhs       = floats[base + 4];
+                const tStep      = floats[base + 5];
+                const tUnpack    = floats[base + 6];
+
+                // Client-side timers
+                const t0Draw = performance.now();
                 this.drawer.draw(this.xy);
+                const tDraw = performance.now() - t0Draw;
+
+                const t0Render = performance.now();
                 this.graphics.render();
+                const tRender = performance.now() - t0Render;
+
                 this.socket.send('run');
+
+                // Update HUD (after WS send so send latency is in "overhead")
+                const tServer = tFind + tInterp + tRhs + tStep + tUnpack;
+                const tClient = tDraw + tRender;
+                const tSum    = tServer + tClient;
+                const ft      = frameTime ?? 0;
+                const pct = (ms) => ft > 0 ? ms / ft * 100 : 0;
+
+                const sep = '─'.repeat(38);
+                const lines = [
+                    `Sim time: ${simTime.toFixed(4)} s    Realtime ratio: ${rtRatio.toFixed(2)}×`,
+                    '',
+                    frameTime !== null
+                        ? `Frame time:          ${ft.toFixed(1).padStart(7)} ms`
+                        : 'Frame time:          (first frame)',
+                    sep,
+                    fmtRow('Server', tServer, pct(tServer)),
+                    fmtRow('Find neighbors',  tFind,   pct(tFind),   '  '),
+                    fmtRow('Interp. force',   tInterp, pct(tInterp), '  '),
+                    fmtRow('Compute RHS',     tRhs,    pct(tRhs),    '  '),
+                    fmtRow('Take step',       tStep,   pct(tStep),   '  '),
+                    fmtRow('Unpack state',    tUnpack, pct(tUnpack), '  '),
+                    fmtRow('Client', tClient, pct(tClient)),
+                    fmtRow('Draw geometry',   tDraw,   pct(tDraw),   '  '),
+                    fmtRow('WebGL render',    tRender, pct(tRender), '  '),
+                    sep,
+                    fmtRow('Sum of components', tSum, pct(tSum)),
+                ];
+                this.hud.textContent = lines.join('\n');
+
+                console.log('Received new state from server: ', this.xy);
+                this.lastFrameStart = frameStart;
             }
         }
 

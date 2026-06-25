@@ -37,16 +37,32 @@ int main() {
                     length = sim->xy.size() * sizeof(float);
                     ws->send(std::string_view(state_data, length), uWS::OpCode::BINARY);
                 } else if (message == "run") {
-                    // Run sim and send state
+                    // Accumulate per-kernel times over all steps so the client
+                    // gets a full-frame total, not just the last step's time.
+                    float t_find = 0.f, t_interp = 0.f, t_rhs = 0.f, t_step = 0.f;
                     for (int steps = 0; steps < 10; ++steps) {
                         sim->take_step();
+                        t_find  += sim->time_update_grid;
+                        t_interp += sim->time_interpolate_force;
+                        t_rhs   += sim->time_compute_rhs;
+                        t_step  += sim->time_take_step;
                     }
                     sim->unpack_state();
-                    // Pack xy + [sim time, real-time ratio] into one buffer
-                    std::vector<float> payload(sim->xy.size() + 2);
+                    // Pack xy + metadata into one buffer.
+                    // Layout: [n*2 xy floats | sim_time | real_time_ratio |
+                    //          t_find_neighbors | t_interpolate_force |
+                    //          t_compute_rhs | t_take_step | t_unpack_state]
+                    // All times are in milliseconds.
+                    const size_t n_xy = sim->xy.size();
+                    std::vector<float> payload(n_xy + 7);
                     std::copy(sim->xy.begin(), sim->xy.end(), payload.begin());
-                    payload[sim->xy.size() + 0] = sim->time;
-                    payload[sim->xy.size() + 1] = sim->real_time_ratio;
+                    payload[n_xy + 0] = sim->time;
+                    payload[n_xy + 1] = sim->real_time_ratio;
+                    payload[n_xy + 2] = t_find;
+                    payload[n_xy + 3] = t_interp;
+                    payload[n_xy + 4] = t_rhs;
+                    payload[n_xy + 5] = t_step;
+                    payload[n_xy + 6] = sim->time_unpack_state;
                     const char* state_data = reinterpret_cast<const char*>(payload.data());
                     size_t length = payload.size() * sizeof(float);
                     ws->send(std::string_view(state_data, length), uWS::OpCode::BINARY);
