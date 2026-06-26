@@ -35,15 +35,9 @@ public:
     DeviceVector<float> device_mass;
 
     // Flat per-particle neighbor list, populated each step by
-    // FindNeighborsKernel (which does the actual spatial-grid lookup
-    // internally, via cuco hash maps it owns privately) and consumed by
-    // ComputeRHSKernel. Sized n*9*particles_per_cell: 9 = the 3x3 stencil's
-    // cell count, particles_per_cell = worst-case occupancy per cell
-    // (enforced by an overflow assert in FindNeighborsKernel). Each
-    // particle's row is terminated by a -1 sentinel once its neighbors run
-    // out. Neither ParticleDynamicsCUDA nor ComputeRHSKernel ever touch
-    // cuco directly -- that's the point of this flat array as the
-    // interface, instead of passing hash-map handles around.
+    // FindNeighborsKernel and consumed by ComputeRHSKernel.
+    // Sized n*9*particles_per_cell (9 = 3x3 stencil cell count).
+    // Each particle's row is terminated by a -1 sentinel.
     DeviceVector<int> device_neighbors;
 
     DeviceVector<float> device_energy;

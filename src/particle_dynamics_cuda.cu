@@ -21,10 +21,8 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
     // Create grid
     grid_size = 32;
     particles_per_cell = 64;
-    // 9 = the 3x3 stencil's cell count; particles_per_cell = worst-case
-    // occupancy per cell (see FindNeighborsKernel's overflow assert). This
-    // is the only place that needs to know about the spatial grid at all --
-    // FindNeighborsKernel owns the actual cuco hash maps privately.
+    // 9 = 3x3 stencil cell count; FindNeighborsKernel owns the dense spatial
+    // grid privately and writes results as a flat n*9*k neighbor array.
     device_neighbors = DeviceVector<int>(static_cast<size_t>(n) * 9 * static_cast<size_t>(particles_per_cell));
 
     time = 0.0f;
