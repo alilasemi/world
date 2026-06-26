@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "host_vector.h"
-#include "particle_dynamics_cuda.h"
+#include "particle_dynamics.h"
 
 // None of these tests call resize()/initialize_to_*() after construction:
 // those reallocate host_state/device_state, but the kernel objects already
@@ -12,16 +12,16 @@
 // Instead, tests mutate sim.host_state[...] directly and push the change
 // with sim.device_state.copy_from_host(sim.host_state).
 
-TEST(ParticleDynamicsCUDATest, RunsStablyForFixedIterations) {
-    ParticleDynamicsCUDA sim;
+TEST(ParticleDynamicsTest, RunsStablyForFixedIterations) {
+    ParticleDynamics sim;
     for (int i = 0; i < 100; ++i) {
         sim.take_step();
     }
     EXPECT_TRUE(sim.is_stable());
 }
 
-TEST(ParticleDynamicsCUDATest, BodyForceCancelsGravity) {
-    ParticleDynamicsCUDA sim;
+TEST(ParticleDynamicsTest, BodyForceCancelsGravity) {
+    ParticleDynamics sim;
     for (int i = 0; i < sim.n; ++i) {
         sim.host_state[4 * i + 2] = 0.0f;
         sim.host_state[4 * i + 3] = 0.0f;
@@ -53,8 +53,8 @@ TEST(ParticleDynamicsCUDATest, BodyForceCancelsGravity) {
     }
 }
 
-TEST(ParticleDynamicsCUDATest, FreeFallMatchesKinematics) {
-    ParticleDynamicsCUDA sim;
+TEST(ParticleDynamicsTest, FreeFallMatchesKinematics) {
+    ParticleDynamics sim;
     for (int i = 0; i < sim.n; ++i) {
         sim.host_state[4 * i + 2] = 0.0f;
         sim.host_state[4 * i + 3] = 0.0f;
@@ -72,8 +72,8 @@ TEST(ParticleDynamicsCUDATest, FreeFallMatchesKinematics) {
     EXPECT_NEAR(sim.xy[1] - y0, expected_dy, 1e-6f);
 }
 
-TEST(ParticleDynamicsCUDATest, ParticleDoesNotPenetrateFloor) {
-    ParticleDynamicsCUDA sim;
+TEST(ParticleDynamicsTest, ParticleDoesNotPenetrateFloor) {
+    ParticleDynamics sim;
     sim.host_state[0] = 0.5f;
     sim.host_state[1] = -0.5f; // isolated, mid-domain
     sim.host_state[2] = 0.0f;
@@ -87,8 +87,8 @@ TEST(ParticleDynamicsCUDATest, ParticleDoesNotPenetrateFloor) {
     EXPECT_TRUE(sim.is_stable());
 }
 
-TEST(ParticleDynamicsCUDATest, OccupancyGridMarksCorrectCell) {
-    ParticleDynamicsCUDA sim;
+TEST(ParticleDynamicsTest, OccupancyGridMarksCorrectCell) {
+    ParticleDynamics sim;
     sim.host_state[0] = 0.0f;
     sim.host_state[1] = 0.0f; // cell (8,8) of 16x16
     sim.device_state.copy_from_host(sim.host_state);
@@ -98,9 +98,9 @@ TEST(ParticleDynamicsCUDATest, OccupancyGridMarksCorrectCell) {
     EXPECT_EQ(occ[8 * static_cast<size_t>(sim.force_grid_size) + 8], 1);
 }
 
-TEST(ParticleDynamicsCUDATest, RepeatedRunsAreDeterministic) {
+TEST(ParticleDynamicsTest, RepeatedRunsAreDeterministic) {
     auto run = [](std::vector<float>& out) {
-        ParticleDynamicsCUDA sim;
+        ParticleDynamics sim;
         for (int i = 0; i < 50; ++i) {
             sim.take_step();
         }
@@ -116,8 +116,8 @@ TEST(ParticleDynamicsCUDATest, RepeatedRunsAreDeterministic) {
     }
 }
 
-TEST(ParticleDynamicsCUDATest, SledParticleMovesUnderInitialVelocity) {
-    ParticleDynamicsCUDA sim;
+TEST(ParticleDynamicsTest, SledParticleMovesUnderInitialVelocity) {
+    ParticleDynamics sim;
     const int sled = sim.n - 1;
     const float x0 = sim.host_state[4 * sled + 0];
     for (int i = 0; i < 10; ++i) {

@@ -2,14 +2,14 @@
 #include <iostream>
 using std::unique_ptr;
 
-#include "particle_dynamics_cuda.h"
+#include "particle_dynamics.h"
 
 struct PerSocketData {};
 
 int main() {
 
     // Set up simulation
-    using SimType = ParticleDynamicsCUDA;
+    using SimType = ParticleDynamics;
     unique_ptr<SimType> sim;
 
     auto app = uWS::App();

@@ -12,7 +12,7 @@
 #include "occupancy_grid_kernel.h"
 #include "take_step_kernel.h"
 
-class ParticleDynamicsCUDA {
+class ParticleDynamics {
 public:
     float time;
     float last_time;
@@ -66,7 +66,7 @@ public:
     void stop_timer(float& elapsed_time);
 
 
-    ParticleDynamicsCUDA();
+    ParticleDynamics();
 
     void resize(const int new_n);
 
@@ -99,12 +99,12 @@ public:
     // is only as fresh as the last call.
     void update_occupancy_grid();
 
-    ~ParticleDynamicsCUDA();
+    ~ParticleDynamics();
 
     // Prevent copying and assignment. It's error prone since CPU code can copy
     // these device pointers and cause problems.
-    ParticleDynamicsCUDA(const ParticleDynamicsCUDA&) = delete;
-    ParticleDynamicsCUDA& operator=(const ParticleDynamicsCUDA&) = delete;
+    ParticleDynamics(const ParticleDynamics&) = delete;
+    ParticleDynamics& operator=(const ParticleDynamics&) = delete;
 
 private:
     std::unique_ptr<FindNeighborsKernel> find_neighbors_kernel;

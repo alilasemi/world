@@ -1,11 +1,11 @@
 #include <iostream>
-#include "particle_dynamics_cuda.h"
+#include "particle_dynamics.h"
 
 
 int main() {
 
     // Set up simulation
-    ParticleDynamicsCUDA sim;
+    ParticleDynamics sim;
 
     float find0  = sim.find_neighbors_wct();
     float interp0 = sim.interpolate_force_wct();

@@ -8,7 +8,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "particle_dynamics_cuda.h"
+#include "particle_dynamics.h"
 
 namespace {
 
@@ -19,7 +19,7 @@ constexpr float kSimTime = 0.1f;
 // (e.g. FindNeighborsKernel's grid-overflow assert under a too-large dt), only
 // this child dies, not the whole sweep.
 void run_child(float dt, const char* out_path) {
-    ParticleDynamicsCUDA sim;
+    ParticleDynamics sim;
     sim.dt = dt;
 
     const int num_steps = static_cast<int>(std::lround(static_cast<double>(kSimTime) / static_cast<double>(dt)));
@@ -65,7 +65,7 @@ std::string resolve_self_path(const char* argv0) {
 // Forks and re-execs self in child mode for a single dt value, so that a
 // CUDA-fatal abort() in the child cannot bring down the rest of the sweep.
 // Must be called before this process ever touches CUDA (fork-after-CUDA-init
-// is unsupported) -- the parent never constructs a ParticleDynamicsCUDA.
+// is unsupported) -- the parent never constructs a ParticleDynamics.
 Result run_dt_in_subprocess(const std::string& self_path, float dt) {
     Result result;
     result.dt = dt;

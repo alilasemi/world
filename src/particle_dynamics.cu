@@ -2,11 +2,11 @@
 #include <assert.h>
 #include <cmath>
 #include <chrono>
-#include "particle_dynamics_cuda.h"
+#include "particle_dynamics.h"
 #include "cuda_check.h"
 
 
-ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
+ParticleDynamics::ParticleDynamics() {
     cudaEventCreate(&start_event);
     cudaEventCreate(&stop_event);
 
@@ -83,7 +83,7 @@ ParticleDynamicsCUDA::ParticleDynamicsCUDA() {
 }
 
 
-void ParticleDynamicsCUDA::resize(const int new_n) {
+void ParticleDynamics::resize(const int new_n) {
     n = new_n;
     xy = std::vector<float>(2*n);
 
@@ -95,7 +95,7 @@ void ParticleDynamicsCUDA::resize(const int new_n) {
 }
 
 
-void ParticleDynamicsCUDA::unpack_state() {
+void ParticleDynamics::unpack_state() {
     time_unpack_state = 0.f;
     start_timer();
 
@@ -114,7 +114,7 @@ void ParticleDynamicsCUDA::unpack_state() {
 
 
 
-void ParticleDynamicsCUDA::initialize_to_two_particles(const float x0, const float y0) {
+void ParticleDynamics::initialize_to_two_particles(const float x0, const float y0) {
     printf("Initializing to two particles at (%.2f, %.2f) and (%.2f, %.2f)...\n", x0, y0, x0, y0 + 0.1f);
     resize(2);
 
@@ -138,7 +138,7 @@ void ParticleDynamicsCUDA::initialize_to_two_particles(const float x0, const flo
 }
 
 
-void ParticleDynamicsCUDA::initialize_to_cube(const float x0, const float y0) {
+void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
     float length = 1.f;
     float radius = 0.01f;
     int num_per_side = static_cast<int>(length / (2 * radius));
@@ -167,11 +167,11 @@ void ParticleDynamicsCUDA::initialize_to_cube(const float x0, const float y0) {
 }
 
 
-void ParticleDynamicsCUDA::start_timer() {
+void ParticleDynamics::start_timer() {
     cudaEventRecord(start_event);
 }
 
-void ParticleDynamicsCUDA::stop_timer(float& elapsed_time) {
+void ParticleDynamics::stop_timer(float& elapsed_time) {
     cudaEventRecord(stop_event);
     cudaEventSynchronize(stop_event);
     float time = 0.f;
@@ -180,7 +180,7 @@ void ParticleDynamicsCUDA::stop_timer(float& elapsed_time) {
 }
 
 
-float ParticleDynamicsCUDA::get_real_time_ratio() {
+float ParticleDynamics::get_real_time_ratio() {
     auto now = std::chrono::steady_clock::now();
     double wall_delta = std::chrono::duration<double>(now - last_wall_clock_time).count();
     float ratio = 0.0f;
@@ -193,7 +193,7 @@ float ParticleDynamicsCUDA::get_real_time_ratio() {
 }
 
 
-void ParticleDynamicsCUDA::take_step() {
+void ParticleDynamics::take_step() {
     (*find_neighbors_kernel)();
     (*interpolate_force_kernel)();
     (*compute_rhs_kernel)();
@@ -202,14 +202,14 @@ void ParticleDynamicsCUDA::take_step() {
     time += dt;
 }
 
-float ParticleDynamicsCUDA::compute_total_energy() {
+float ParticleDynamics::compute_total_energy() {
     (*energy_kernel)();
     host_energy.copy_from_device(device_energy);
     return host_energy[0];
 }
 
 
-bool ParticleDynamicsCUDA::is_stable() {
+bool ParticleDynamics::is_stable() {
     host_state.copy_from_device(device_state);
     for (int i = 0; i < n; ++i) {
         const float x = host_state[4 * i + 0];
@@ -222,14 +222,14 @@ bool ParticleDynamicsCUDA::is_stable() {
 }
 
 
-void ParticleDynamicsCUDA::update_occupancy_grid() {
+void ParticleDynamics::update_occupancy_grid() {
     (*occupancy_grid_kernel)();
 }
 
 
-float ParticleDynamicsCUDA::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
-float ParticleDynamicsCUDA::interpolate_force_wct() const { return interpolate_force_kernel->wall_clock_time(); }
-float ParticleDynamicsCUDA::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }
-float ParticleDynamicsCUDA::take_step_wct()         const { return take_step_kernel->wall_clock_time(); }
+float ParticleDynamics::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
+float ParticleDynamics::interpolate_force_wct() const { return interpolate_force_kernel->wall_clock_time(); }
+float ParticleDynamics::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }
+float ParticleDynamics::take_step_wct()         const { return take_step_kernel->wall_clock_time(); }
 
-ParticleDynamicsCUDA::~ParticleDynamicsCUDA() = default;
+ParticleDynamics::~ParticleDynamics() = default;
