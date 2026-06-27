@@ -1,17 +1,20 @@
 #pragma once
 #include "device_vector.h"
 #include "kernel.h"
+#include "sim_config.h"
 
 class FindNeighborsKernel : public Kernel {
 public:
     FindNeighborsKernel(const float* state_, int n_, int grid_size_,
-            int particles_per_cell_, int* neighbors_);
+            int particles_per_cell_, const DomainParams domain_,
+            int threads_per_block_, int* neighbors_);
     ~FindNeighborsKernel() override = default;
 
 private:
     const float* state;
     const int grid_size;
     const int particles_per_cell;
+    const DomainParams domain;
     int* neighbors;
 
     // Dense spatial grid: spatial_grid[cell_x*grid_size + cell_y] holds the

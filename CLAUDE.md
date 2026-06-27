@@ -23,7 +23,7 @@ make clean        # rm -rf build/
 make GPU_ARCH=sm_75   # override arch for cross-compiling / unusual setups
 ```
 
-Run the server: `./build/bin/world` (listens on port 8081 for WebSocket connections).
+Run the server: `./build/bin/world` (listens on port 8081 for WebSocket connections). All three backend binaries (`world`, `profile`, `stability_and_accuracy`) read a YAML config — see "Configuration" below — from `config.yaml` in the cwd by default, or from a path passed as the first CLI arg (`./build/bin/world my_config.yaml`). A missing file is fine: each falls back to built-in defaults with a printed notice.
 
 There is no `nvcc`-only single-file shortcut for individual kernels — everything goes through the Makefile's pattern rules (`src/%.cpp` -> g++, `src/%.cu` -> nvcc).
 
@@ -42,7 +42,7 @@ Open `http://localhost:8080` in a browser. The page hits `/config` to learn `mod
 
 `src/broadcast.cpp` (compiled to `build/bin/world`) owns a `uWS::App` on port 8081 and a single `unique_ptr<ParticleDynamics>` sim instance (one sim per process, recreated on `"initialize"`). The protocol is a simple text-command / binary-response exchange:
 
-- Client sends `"initialize"` -> server allocates a new `ParticleDynamics`, sends back `int32 n`, then `int32 grid_size` (so the client can draw the spatial grid overlay — see "Rendering" below), then `n*2` floats of initial `(x, y)` state.
+- Client sends `"initialize"` -> server allocates a new `ParticleDynamics`, sends back `int32 n`, then `int32 grid_size` (so the client can draw the spatial grid overlay — see "Rendering" below), then `int32 num_triangles` and `float particle_radius` (rendering constants the client uses to build particle geometry — sent once here, never per-frame), then `n*2` floats of initial `(x, y)` state. The client's `Client.onmessage` state machine reads these in exactly this order (states 0→4) before entering the steady loop.
 - Client sends `"run"` -> server calls `sim->take_step()` 10x, unpacks state, sends back the updated `(x, y)` float buffer.
 
 The client (`client/world.js`, `Client` class) mirrors this as a small state machine: `state 0` (waiting for `n`) -> `state 1` (waiting for `grid_size`) -> `state 2` (waiting for IC) -> `state 3+` (steady loop: draw, render, request next `"run"`). `client/index.js` is unrelated to the sim — it's just the Express static file/`,/config` server.
@@ -51,9 +51,17 @@ The client (`client/world.js`, `Client` class) mirrors this as a small state mac
 
 `src/stability_and_accuracy.cpp` (`build/bin/stability_and_accuracy`) is a third driver: it sweeps a fixed list of `dt` values, running each from the same default IC to simulated `t = 0.1s` and reporting final total energy (`ParticleDynamics::compute_total_energy()`) and a stability verdict (`ParticleDynamics::is_stable()` — all particles finite and within `[-1,1]x[-1,1]`). Because `CUDA_CHECK` `abort()`s the whole process on any CUDA error (e.g. `FindNeighborsKernel`'s grid-overflow assert, plausible under a large/unstable `dt`), each `dt` runs in its own `fork()`+`execl()`-relaunched child process (the same binary re-invoked with `--dt <value> --out <path>`) so one crashing `dt` doesn't take down the rest of the sweep; the parent never touches CUDA itself (fork-after-CUDA-init is unsupported) and reports a non-zero/signaled child exit as `stable = false` rather than reading the (possibly absent) output file.
 
+### Configuration: `SimConfig` + `config.yaml` (src/sim_config.{h,cpp})
+
+All tunable constants (timestep, grid sizes, gravity/radius/max-force, domain bounds, per-material masses, initialization geometry, rendering `num_triangles`, and driver settings like port / steps-per-frame / the stability dt sweep) live in a single `SimConfig` struct (`src/sim_config.h`). Its member defaults reproduce the values that were previously hardcoded, so a **default-constructed `SimConfig` (and `ParticleDynamics{}`) behaves exactly as before** — this is what the GoogleTest suite and the default driver paths rely on.
+
+`load_config(path)` (`src/sim_config.cpp`) is a small hand-written YAML reader (no external dependency) supporting the subset the config needs: top-level `section:` headers, indented `key: value` lines, `[a, b, c]` inline lists, and `#` comments. It starts from defaults and overrides only the keys present, warns on unknown keys, and returns defaults (with a notice) if the file is absent. The example `config.yaml` at the repo root lists every value at its current default. If you add a new tunable: add the field to `SimConfig`, a case in `apply_kv` in `sim_config.cpp`, and a line to `config.yaml`.
+
+Two small POD structs in `sim_config.h` — `DomainParams` (`x_min/x_max/y_min/y_max`) and `PhysicsParams` (gravity, particle_radius, max_force, floor/wall positions) — are passed **by value** into the kernels (the standard way to get these constants device-side; kernels store them as members and forward them to the `<<<>>>` launch). The domain is no longer assumed to be `[-1,1]`: every coordinate→cell mapping (`find_neighbors`, `interpolate_force`, `occupancy_grid`) and `is_stable()` derives its range from `DomainParams`. `threads_per_block` is also config-driven, forwarded through each kernel ctor to the `Kernel` base.
+
 ### Simulation: `ParticleDynamics` (src/particle_dynamics.{h,cu})
 
-State layout is a flat device array of `4*n` floats per particle: `[x, y, vx, vy]`. Each particle has a `material` id (0 = wall, 1 = snow, 2 = sled) which indexes a `mass` array — this is what differentiates particle types rather than separate classes. Per `take_step()`:
+`ParticleDynamics`'s constructor takes a `const SimConfig&` (defaulted), stores it as the public `config` member, and pulls all its grid/physics/init parameters from it instead of hardcoding them. State layout is a flat device array of `4*n` floats per particle: `[x, y, vx, vy]`. Each particle has a `material` id (0 = wall, 1 = snow, 2 = sled) which indexes a `mass` array — this is what differentiates particle types rather than separate classes. Per `take_step()`:
 
 1. `FindNeighborsKernel` (src/find_neighbors_kernel.{h,cu}) — buckets particles into a uniform `grid_size x grid_size` spatial grid (see "Spatial grid" below), then gathers each particle's neighbors into a flat `device_neighbors` array for `ComputeRHSKernel` to consume; `particles_per_cell` capacity per cell, hard assert-fails on overflow.
 2. `InterpolateForceKernel` (src/interpolate_force_kernel.{h,cu}) — bilinearly interpolates the m×m `device_grid_force_x/y` field (see "AI control hooks" below) onto each particle's position, writing per-particle `device_body_force_x/y`.
@@ -117,3 +125,27 @@ compute-sanitizer --tool memcheck ./build/bin/profile   # out-of-bounds / invali
 compute-sanitizer --tool racecheck ./build/bin/profile  # shared/global memory race hazards
 compute-sanitizer --tool initcheck ./build/bin/profile  # reads of uninitialized device memory
 ```
+
+## Client/browser verification (headless)
+
+This dev box can drive the actual WebGL2 client headlessly — use this to verify client-side
+changes (the `client/world.js` render path, the WS protocol) end-to-end instead of only checking the
+wire bytes. **Playwright is installed globally** (`playwright --version`, currently 1.61.x; require
+it from the global `node_modules`, it is *not* a `client/` dependency) and **system Chrome** is on
+PATH (`/usr/bin/google-chrome`). WebGL works headless via SwiftShader — launch Chrome with
+`channel: 'chrome'` and args `--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`.
+A Playwright script can then capture `console`/`pageerror` events and a canvas screenshot, which
+renders the particle cube + red grid overlay + HUD (a useful visual smoke test).
+
+Recipe: start the backend, then the static client server, then drive a browser at
+`http://localhost:8080`:
+```
+setsid ./build/bin/world >world.log 2>&1 </dev/null &   # see gotcha below
+(cd client && setsid node index.js local >client.log 2>&1 </dev/null &)  # :8080, WS -> localhost:8081
+# then a Playwright .cjs that goto()'s http://localhost:8080, waits a few seconds, screenshots
+```
+
+**Gotcha:** launch long-running servers with `setsid ... </dev/null &` (detached from the shell's
+process group). A plain `&` puts them in the Bash tool's process group, so they get killed when that
+tool invocation's shell exits — the server appears to die "after one initialize" for no reason. The
+incidental 404 in the browser console is just a missing `favicon.ico`, not a real error.

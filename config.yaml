@@ -1,0 +1,63 @@
+# Particle simulation configuration.
+#
+# Every value here matches the constant that was previously hardcoded in the
+# source, so running with this file reproduces the original behavior. The loader
+# (src/sim_config.cpp) reads a simple subset of YAML: top-level "section:"
+# headers, indented "key: value" lines, "[a, b, c]" inline lists, and # comments.
+# Any key omitted falls back to the built-in default; an absent file is fine too.
+
+simulation:
+  dt: 0.0001
+  grid_size: 32
+  particles_per_cell: 64
+  force_grid_size: 16
+  threads_per_block: 256
+
+# Simulation domain bounds. Particles are mapped into grid cells across this
+# range; it need not be the historical [-1, 1] x [-1, 1].
+domain:
+  x_min: -1.0
+  x_max: 1.0
+  y_min: -1.0
+  y_max: 1.0
+
+physics:
+  gravity: 9.81
+  particle_radius: 0.01
+  max_force: 100.0
+  floor_y: -1.0
+  left_wall_x: -1.0
+  right_wall_x: 1.0
+
+materials:
+  # Per-material masses, indexed by material id: 0 = wall, 1 = snow, 2 = sled.
+  masses: [0.0, 0.04, 0.04]
+
+initialization:
+  type: cube                 # "cube" or "two_particles"
+  x0: -0.5
+  y0: 0.0
+  # cube: square grid of "snow" particles plus one "sled" particle on top.
+  # Particle spacing is derived from physics.particle_radius.
+  cube_length: 1.0
+  sled_x: -0.9
+  sled_y: 0.9
+  sled_vx: 0.4
+  sled_vy: 0.0
+  sled_material: 2
+  particle_material: 1
+  # two_particles: vertical offset between the two particles.
+  two_particle_separation: 0.1
+
+rendering:
+  # Triangles per particle polygon, sent to the client at initialize. The render
+  # radius is not a separate field -- it reuses physics.particle_radius.
+  num_triangles: 20
+
+drivers:
+  port: 8081
+  steps_per_frame: 10
+  profiling_outer_iters: 10
+  profiling_steps_per_iter: 10
+  stability_sim_time: 0.1
+  stability_dt_sweep: [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001]

@@ -14,8 +14,9 @@ __global__ void take_step_kernel(float* state, const float* rhs, size_t n, float
 }
 
 
-TakeStepKernel::TakeStepKernel(float* state_, const float* rhs_, const int n_, const float dt_)
-        : Kernel(n_), state(state_), rhs(rhs_), dt(dt_) {
+TakeStepKernel::TakeStepKernel(float* state_, const float* rhs_, const int n_, const float dt_,
+        const int threads_per_block_)
+        : Kernel(n_, threads_per_block_), state(state_), rhs(rhs_), dt(dt_) {
 }
 
 

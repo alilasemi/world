@@ -133,10 +133,10 @@ function buildGridLineVertices(gridSize) {
 
 // Convert the above ParticleDrawer class from C++ to JavaScript
 class ParticleDrawer {
-    constructor(n, num_triangles) {
+    constructor(n, num_triangles, radius) {
         this.n = n;
         this.num_triangles = num_triangles;
-        this.radius = 0.01;
+        this.radius = radius;
         this.node_coords = new Float32Array(n * (num_triangles + 1) * 3);
         this.triangles = new Int32Array(num_triangles * n * 3);
         this.create_triangle_connectivity();
@@ -361,6 +361,19 @@ class Client {
             console.log('Received gridSize from server: ', this.gridSize);
             ++this.state;
         } else if (this.state == 2) {
+            // Read rendering constant: triangles per particle (sent once at init)
+            const dataView = new DataView(event.data);
+            this.numTriangles = dataView.getInt32(0, true);
+            console.log('Received numTriangles from server: ', this.numTriangles);
+            ++this.state;
+        } else if (this.state == 3) {
+            // Read rendering constant: particle radius (sent once at init;
+            // reuses the simulation's particle_radius)
+            const dataView = new DataView(event.data);
+            this.particleRadius = dataView.getFloat32(0, true);
+            console.log('Received particleRadius from server: ', this.particleRadius);
+            ++this.state;
+        } else if (this.state == 4) {
             // Read initial condition
             const dataView = new DataView(event.data);
             this.xy = new Float32Array(event.data);
@@ -443,8 +456,8 @@ class Client {
     }
 
     setup() {
-        // Set up particle drawer
-        this.drawer = new ParticleDrawer(this.n, 20);
+        // Set up particle drawer (num triangles + radius come from the server)
+        this.drawer = new ParticleDrawer(this.n, this.numTriangles, this.particleRadius);
         this.drawer.draw(this.xy)
         // Set up graphics
         this.graphics = new Graphics(this.drawer, this.gridSize);

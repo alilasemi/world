@@ -15,17 +15,18 @@ __device__ float bilerp_cell(const float* grid, int i0, int i1, int j0, int j1, 
 
 
 __global__ void interpolate_force_kernel(const float* state, const float* grid_force_x, const float* grid_force_y,
-        size_t n, int m, float* force_x, float* force_y) {
+        size_t n, int m, DomainParams domain, float* force_x, float* force_y) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
-    const float cell_width = 2.0f / m;
+    const float cell_width_x = (domain.x_max - domain.x_min) / m;
+    const float cell_width_y = (domain.y_max - domain.y_min) / m;
     for (int i = index; i < n; i += stride) {
         const float x = state[4 * i + 0];
         const float y = state[4 * i + 1];
 
         // Cell-center-spacing coordinates: u=0 sits exactly at cell 0's center.
-        const float u = (x + 1.0f) / cell_width - 0.5f;
-        const float v = (y + 1.0f) / cell_width - 0.5f;
+        const float u = (x - domain.x_min) / cell_width_x - 0.5f;
+        const float v = (y - domain.y_min) / cell_width_y - 0.5f;
 
         // floorf, not a truncating cast -- u/v can be negative near the
         // domain's left/bottom edge and must round toward -infinity.
@@ -46,12 +47,15 @@ __global__ void interpolate_force_kernel(const float* state, const float* grid_f
 
 
 InterpolateForceKernel::InterpolateForceKernel(const float* state_, const float* grid_force_x_,
-        const float* grid_force_y_, const int n_, const int m_, float* force_x_, float* force_y_)
-        : Kernel(n_), state(state_), grid_force_x(grid_force_x_), grid_force_y(grid_force_y_), m(m_),
+        const float* grid_force_y_, const int n_, const int m_, const DomainParams domain_,
+        const int threads_per_block_, float* force_x_, float* force_y_)
+        : Kernel(n_, threads_per_block_), state(state_), grid_force_x(grid_force_x_),
+          grid_force_y(grid_force_y_), m(m_), domain(domain_),
           force_x(force_x_), force_y(force_y_) {
 }
 
 
 void InterpolateForceKernel::call_kernel(int blocks, int threads_per_block) {
-    interpolate_force_kernel<<<blocks, threads_per_block>>>(state, grid_force_x, grid_force_y, n, m, force_x, force_y);
+    interpolate_force_kernel<<<blocks, threads_per_block>>>(state, grid_force_x, grid_force_y, n, m,
+            domain, force_x, force_y);
 }

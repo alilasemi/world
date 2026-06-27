@@ -9,20 +9,20 @@
 #include <unistd.h>
 
 #include "particle_dynamics.h"
+#include "sim_config.h"
 
 namespace {
 
-constexpr float kSimTime = 0.1f;
-
-// Runs a single dt to t = kSimTime and writes "<energy> <stable 0/1>" to
-// out_path. Runs in a child process -- if a CUDA error aborts the process
-// (e.g. FindNeighborsKernel's grid-overflow assert under a too-large dt), only
-// this child dies, not the whole sweep.
-void run_child(float dt, const char* out_path) {
-    ParticleDynamics sim;
+// Runs a single dt to t = config.stability_sim_time and writes
+// "<energy> <stable 0/1>" to out_path. Runs in a child process -- if a CUDA
+// error aborts the process (e.g. FindNeighborsKernel's grid-overflow assert
+// under a too-large dt), only this child dies, not the whole sweep.
+void run_child(float dt, const char* out_path, const SimConfig& config) {
+    ParticleDynamics sim(config);
     sim.dt = dt;
 
-    const int num_steps = static_cast<int>(std::lround(static_cast<double>(kSimTime) / static_cast<double>(dt)));
+    const int num_steps = static_cast<int>(std::lround(
+            static_cast<double>(config.stability_sim_time) / static_cast<double>(dt)));
 
     bool stable = true;
     for (int step = 0; step < num_steps; ++step) {
@@ -66,7 +66,7 @@ std::string resolve_self_path(const char* argv0) {
 // CUDA-fatal abort() in the child cannot bring down the rest of the sweep.
 // Must be called before this process ever touches CUDA (fork-after-CUDA-init
 // is unsupported) -- the parent never constructs a ParticleDynamics.
-Result run_dt_in_subprocess(const std::string& self_path, float dt) {
+Result run_dt_in_subprocess(const std::string& self_path, float dt, const std::string& config_path) {
     Result result;
     result.dt = dt;
 
@@ -89,7 +89,8 @@ Result run_dt_in_subprocess(const std::string& self_path, float dt) {
     }
 
     if (pid == 0) {
-        execl(self_path.c_str(), self_path.c_str(), "--dt", dt_buf, "--out", out_path.c_str(), nullptr);
+        execl(self_path.c_str(), self_path.c_str(), "--dt", dt_buf, "--out", out_path.c_str(),
+                "--config", config_path.c_str(), nullptr);
         perror("execl");
         std::exit(127);
     }
@@ -121,18 +122,24 @@ Result run_dt_in_subprocess(const std::string& self_path, float dt) {
 
 int main(int argc, char** argv) {
     // Child mode: run a single dt and report its result to a file.
-    if (argc == 5 && std::strcmp(argv[1], "--dt") == 0 && std::strcmp(argv[3], "--out") == 0) {
-        run_child(std::strtof(argv[2], nullptr), argv[4]);
+    if (argc == 7 && std::strcmp(argv[1], "--dt") == 0 && std::strcmp(argv[3], "--out") == 0 &&
+            std::strcmp(argv[5], "--config") == 0) {
+        const SimConfig config = load_config(argv[6]);
+        run_child(std::strtof(argv[2], nullptr), argv[4], config);
         return 0;
     }
 
-    // Parent mode: sweep every dt, each isolated in its own subprocess.
+    // Parent mode: sweep every dt, each isolated in its own subprocess. The
+    // parent never touches CUDA (fork-after-CUDA-init is unsupported); it only
+    // reads the config to learn the sweep list, then re-execs itself per dt.
+    const std::string config_path = (argc > 1) ? argv[1] : "config.yaml";
+    const SimConfig config = load_config(config_path);
     const std::string self_path = resolve_self_path(argv[0]);
-    const std::vector<float> dts = {0.1f, 0.05f, 0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
+    const std::vector<float> dts = config.stability_dt_sweep;
 
     std::vector<Result> results;
     for (float dt : dts) {
-        results.push_back(run_dt_in_subprocess(self_path, dt));
+        results.push_back(run_dt_in_subprocess(self_path, dt, config_path));
     }
 
     printf("%-10s %-20s %-10s\n", "dt", "energy", "stable");

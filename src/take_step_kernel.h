@@ -4,7 +4,8 @@
 
 class TakeStepKernel : public Kernel {
 public:
-    TakeStepKernel(float* state_, const float* rhs_, const int n_, const float dt_);
+    TakeStepKernel(float* state_, const float* rhs_, const int n_, const float dt_,
+            const int threads_per_block_);
 
     void set_dt(const float dt_) { dt = dt_; }
 

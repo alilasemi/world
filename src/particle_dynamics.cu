@@ -6,21 +6,27 @@
 #include "cuda_check.h"
 
 
-ParticleDynamics::ParticleDynamics() {
+ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     cudaEventCreate(&start_event);
     cudaEventCreate(&stop_event);
 
-    // Initialize on host
-//    initialize_to_two_particles(0.0f, 0.0f);
-    initialize_to_cube(-.5f, 0.0f);
+    // Pull the scalar grid/timestep settings out of the config.
+    grid_size = config.grid_size;
+    particles_per_cell = config.particles_per_cell;
+    force_grid_size = config.force_grid_size;
+    dt = config.dt;
+
+    // Initialize on host according to the configured initialization type.
+    if (config.init_type == "two_particles") {
+        initialize_to_two_particles(config.init_x0, config.init_y0);
+    } else {
+        initialize_to_cube(config.init_x0, config.init_y0);
+    }
     // Copy to device
     device_state.copy_from_host(host_state);
     device_material.copy_from_host(host_material);
     unpack_state();
 
-    // Create grid
-    grid_size = 32;
-    particles_per_cell = 64;
     // 9 = 3x3 stencil cell count; FindNeighborsKernel owns the dense spatial
     // grid privately and writes results as a flat n*9*k neighbor array.
     device_neighbors = DeviceVector<int>(static_cast<size_t>(n) * 9 * static_cast<size_t>(particles_per_cell));
@@ -29,25 +35,19 @@ ParticleDynamics::ParticleDynamics() {
     last_time = 0.0f;
     last_wall_clock_time = std::chrono::steady_clock::now();
     real_time_ratio = 0.0f;
-    // I will assign material 0 to be the walls, material 1 to be the snow, and
-    // material 2 to be the sled
-    host_mass = HostVector<float>(3);
-    device_mass = DeviceVector<float>(3);
-
-    host_mass[0] = 0.0f;
-    host_mass[1] = .04f;
-    host_mass[2] = .04f;
+    // Per-material masses come from the config (index = material id; e.g.
+    // 0 = walls, 1 = snow, 2 = sled).
+    const int num_materials = static_cast<int>(config.masses.size());
+    host_mass = HostVector<float>(num_materials);
+    device_mass = DeviceVector<float>(num_materials);
+    for (int i = 0; i < num_materials; ++i) {
+        host_mass[i] = config.masses[i];
+    }
     device_mass.copy_from_host(host_mass);
-
-    dt = 0.0001f;
-
-//    size_t grid_size = 16;
-//    grid = std::vector<std::vector<std::vector<size_t>>>(grid_size, std::vector<std::vector<size_t>>(grid_size));
 
     // m*m grid of externally-supplied (e.g. AI) body forces, plus the
     // occupancy snapshot fed back to that external model. Independent of the
-    // 256x256 collision grid above.
-    force_grid_size = 16;
+    // collision grid above.
     device_body_force_x = DeviceVector<float>(n);
     device_body_force_y = DeviceVector<float>(n);
     device_grid_force_x = DeviceVector<float>(force_grid_size * force_grid_size);
@@ -63,23 +63,25 @@ ParticleDynamics::ParticleDynamics() {
 
     // Create CUDA kernels
     find_neighbors_kernel = std::make_unique<FindNeighborsKernel>(
-            device_state.data(), n, grid_size, particles_per_cell, device_neighbors.data());
+            device_state.data(), n, grid_size, particles_per_cell, config.domain,
+            config.threads_per_block, device_neighbors.data());
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_neighbors.data(),
             device_body_force_x.data(), device_body_force_y.data(),
-            n, particles_per_cell, device_rhs.data());
-    take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt);
+            n, particles_per_cell, config.physics, config.threads_per_block, device_rhs.data());
+    take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt,
+            config.threads_per_block);
 
     device_energy = DeviceVector<float>(1);
     host_energy = HostVector<float>(1);
     energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
-            device_mass.data(), n, device_energy.data());
+            device_mass.data(), n, config.physics, config.threads_per_block, device_energy.data());
 
     interpolate_force_kernel = std::make_unique<InterpolateForceKernel>(device_state.data(),
-            device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size,
-            device_body_force_x.data(), device_body_force_y.data());
+            device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size, config.domain,
+            config.threads_per_block, device_body_force_x.data(), device_body_force_y.data());
     occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
-            device_state.data(), n, force_grid_size);
+            device_state.data(), n, force_grid_size, config.domain, config.threads_per_block);
 }
 
 
@@ -115,7 +117,8 @@ void ParticleDynamics::unpack_state() {
 
 
 void ParticleDynamics::initialize_to_two_particles(const float x0, const float y0) {
-    printf("Initializing to two particles at (%.2f, %.2f) and (%.2f, %.2f)...\n", x0, y0, x0, y0 + 0.1f);
+    const float separation = config.two_particle_separation;
+    printf("Initializing to two particles at (%.2f, %.2f) and (%.2f, %.2f)...\n", x0, y0, x0, y0 + separation);
     resize(2);
 
     printf("Resized to %d particles.\n", n);
@@ -126,12 +129,12 @@ void ParticleDynamics::initialize_to_two_particles(const float x0, const float y
 
     printf("Initialized first particle at (%.2f, %.2f).\n", host_state[0], host_state[1]);
     host_state[4] = x0;
-    host_state[5] = y0 + 0.1f;
+    host_state[5] = y0 + separation;
     host_state[6] = 0.0f;
     host_state[7] = 0.0f;
 
-    host_material[0] = 1;
-    host_material[1] = 1;
+    host_material[0] = config.particle_material;
+    host_material[1] = config.particle_material;
 
     printf("Initialized second particle at (%.2f, %.2f).\n", host_state[4],
             host_state[5]);
@@ -139,8 +142,10 @@ void ParticleDynamics::initialize_to_two_particles(const float x0, const float y
 
 
 void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
-    float length = 1.f;
-    float radius = 0.01f;
+    const float length = config.cube_length;
+    // Spacing uses the same radius as the collision physics so the initial
+    // packing matches the contact model (deduped from compute_rhs_kernel).
+    const float radius = config.physics.particle_radius;
     int num_per_side = static_cast<int>(length / (2 * radius));
     resize(num_per_side * num_per_side + 1);
 
@@ -154,16 +159,16 @@ void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
     }
 
     // Make one particle of sled on top
-    host_state[4 * (n - 1) + 0] = -.9;
-    host_state[4 * (n - 1) + 1] = .9;
-    host_state[4 * (n - 1) + 2] = .4;
-    host_state[4 * (n - 1) + 3] = 0;
+    host_state[4 * (n - 1) + 0] = config.sled_x;
+    host_state[4 * (n - 1) + 1] = config.sled_y;
+    host_state[4 * (n - 1) + 2] = config.sled_vx;
+    host_state[4 * (n - 1) + 3] = config.sled_vy;
 
-    // Set all particles to be material 1 (snow) except for the last one
+    // Set all particles to the snow material except for the sled particle.
     for (size_t i = 0; i < n - 1; ++i) {
-        host_material[i] = 1;
+        host_material[i] = config.particle_material;
     }
-    host_material[n - 1] = 2;
+    host_material[n - 1] = config.sled_material;
 }
 
 
@@ -211,10 +216,12 @@ float ParticleDynamics::compute_total_energy() {
 
 bool ParticleDynamics::is_stable() {
     host_state.copy_from_device(device_state);
+    const DomainParams& d = config.domain;
     for (int i = 0; i < n; ++i) {
         const float x = host_state[4 * i + 0];
         const float y = host_state[4 * i + 1];
-        if (!std::isfinite(x) || !std::isfinite(y) || x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f) {
+        if (!std::isfinite(x) || !std::isfinite(y) ||
+                x < d.x_min || x > d.x_max || y < d.y_min || y > d.y_max) {
             return false;
         }
     }

@@ -10,10 +10,15 @@
 #include "host_vector.h"
 #include "interpolate_force_kernel.h"
 #include "occupancy_grid_kernel.h"
+#include "sim_config.h"
 #include "take_step_kernel.h"
 
 class ParticleDynamics {
 public:
+    // Full configuration this sim was constructed from. Defaults reproduce the
+    // historical hardcoded behavior.
+    SimConfig config;
+
     float time;
     float last_time;
     std::chrono::steady_clock::time_point last_wall_clock_time;
@@ -66,7 +71,9 @@ public:
     void stop_timer(float& elapsed_time);
 
 
-    ParticleDynamics();
+    // Defaults to a built-in config that matches the original hardcoded values,
+    // so existing call sites (tests, profiling/stability drivers) keep working.
+    explicit ParticleDynamics(const SimConfig& config_ = SimConfig{});
 
     void resize(const int new_n);
 

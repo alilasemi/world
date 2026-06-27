@@ -5,16 +5,16 @@
 
 __global__ void compute_rhs_kernel(const float* state, const int* material,
         const float* mass, float* rhs, const int* neighbors, const float* body_force_x, const float* body_force_y,
-        size_t n, int particles_per_cell) {
+        size_t n, int particles_per_cell, PhysicsParams physics) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
-    const float g = 9.81f;
-    float floor_y = -1.0f;
-    float left_wall_x = -1.0f;
-    float right_wall_x = 1.0f;
-    float max_force = 100.f;
-    float radius = .01f;
+    const float g = physics.gravity;
+    const float floor_y = physics.floor_y;
+    const float left_wall_x = physics.left_wall_x;
+    const float right_wall_x = physics.right_wall_x;
+    const float max_force = physics.max_force;
+    const float radius = physics.particle_radius;
     int row_stride = 9 * particles_per_cell;
     for (int i = index; i < n; i += stride) {
         const float x = state[4 * i + 0];
@@ -86,14 +86,15 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
 ComputeRHSKernel::ComputeRHSKernel(const float* state_, const int* material_, const float* mass_,
             const int* neighbors_, const float* body_force_x_, const float* body_force_y_,
-            const int n_, const int particles_per_cell_, float* rhs_)
-        : Kernel(n_), state(state_), material(material_), mass(mass_), neighbors(neighbors_),
+            const int n_, const int particles_per_cell_, const PhysicsParams physics_,
+            const int threads_per_block_, float* rhs_)
+        : Kernel(n_, threads_per_block_), state(state_), material(material_), mass(mass_), neighbors(neighbors_),
           body_force_x(body_force_x_), body_force_y(body_force_y_),
-          particles_per_cell(particles_per_cell_), rhs(rhs_) {
+          particles_per_cell(particles_per_cell_), physics(physics_), rhs(rhs_) {
 }
 
 
 void ComputeRHSKernel::call_kernel(int blocks, int threads_per_block) {
     compute_rhs_kernel<<<blocks, threads_per_block>>>(state, material, mass, rhs,
-            neighbors, body_force_x, body_force_y, n, particles_per_cell);
+            neighbors, body_force_x, body_force_y, n, particles_per_cell, physics);
 }
