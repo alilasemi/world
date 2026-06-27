@@ -273,9 +273,11 @@ class Graphics {
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         // Render the grid first so particles draw on top of it
-        this.gridShader.use();
-        gl.bindVertexArray(this.VAO_grid);
-        gl.drawArrays(gl.LINES, 0, this.gridVertexCount);
+        if (document.getElementById('gridButton').checked) {
+            this.gridShader.use();
+            gl.bindVertexArray(this.VAO_grid);
+            gl.drawArrays(gl.LINES, 0, this.gridVertexCount);
+        }
 
         // Render the particles
         this.shader.use();
