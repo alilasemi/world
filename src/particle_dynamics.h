@@ -11,7 +11,8 @@
 #include "interpolate_force_kernel.h"
 #include "occupancy_grid_kernel.h"
 #include "sim_config.h"
-#include "take_step_kernel.h"
+#include "backward_euler_picard_kernel.h"
+#include "semi_implicit_euler_kernel.h"
 
 class ParticleDynamics {
 public:
@@ -33,6 +34,7 @@ public:
 
     HostVector<float> host_state;
     DeviceVector<float> device_state;
+    DeviceVector<float> device_state_n;  // x^n saved at start of each Picard step
     DeviceVector<float> device_rhs;
     HostVector<int> host_material;
     DeviceVector<int> device_material;
@@ -116,7 +118,8 @@ public:
 private:
     std::unique_ptr<FindNeighborsKernel> find_neighbors_kernel;
     std::unique_ptr<ComputeRHSKernel> compute_rhs_kernel;
-    std::unique_ptr<TakeStepKernel> take_step_kernel;
+    std::unique_ptr<SemiImplicitEulerKernel> semi_implicit_euler_kernel;
+    std::unique_ptr<BackwardEulerPicardKernel> backward_euler_picard_kernel;
     std::unique_ptr<EnergyKernel> energy_kernel;
     std::unique_ptr<InterpolateForceKernel> interpolate_force_kernel;
     std::unique_ptr<OccupancyGridKernel> occupancy_grid_kernel;

@@ -1,7 +1,7 @@
-#include "take_step_kernel.h"
+#include "semi_implicit_euler_kernel.h"
 
 
-__global__ void take_step_kernel(float* state, const float* rhs, size_t n, float dt) {
+__global__ void semi_implicit_euler_kernel(float* state, const float* rhs, size_t n, float dt) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = index; i < n; i += stride) {
@@ -14,12 +14,12 @@ __global__ void take_step_kernel(float* state, const float* rhs, size_t n, float
 }
 
 
-TakeStepKernel::TakeStepKernel(float* state_, const float* rhs_, const int n_, const float dt_,
-        const int threads_per_block_, bool timing_enabled_)
+SemiImplicitEulerKernel::SemiImplicitEulerKernel(float* state_, const float* rhs_, const int n_,
+        const float dt_, const int threads_per_block_, bool timing_enabled_)
         : Kernel(n_, threads_per_block_, timing_enabled_), state(state_), rhs(rhs_), dt(dt_) {
 }
 
 
-void TakeStepKernel::call_kernel(int blocks, int threads_per_block) {
-    take_step_kernel<<<blocks, threads_per_block>>>(state, rhs, n, dt);
+void SemiImplicitEulerKernel::call_kernel(int blocks, int threads_per_block) {
+    semi_implicit_euler_kernel<<<blocks, threads_per_block>>>(state, rhs, n, dt);
 }

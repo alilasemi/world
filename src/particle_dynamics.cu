@@ -48,6 +48,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     // m*m grid of externally-supplied (e.g. AI) body forces, plus the
     // occupancy snapshot fed back to that external model. Independent of the
     // collision grid above.
+    device_state_n = DeviceVector<float>(4 * n);
     device_body_force_x = DeviceVector<float>(n);
     device_body_force_y = DeviceVector<float>(n);
     device_grid_force_x = DeviceVector<float>(force_grid_size * force_grid_size);
@@ -70,8 +71,10 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
             device_mass.data(), device_neighbors.data(),
             device_body_force_x.data(), device_body_force_y.data(),
             n, particles_per_cell, config.physics, config.threads_per_block, device_rhs.data(), kt);
-    take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt,
-            config.threads_per_block, kt);
+    semi_implicit_euler_kernel = std::make_unique<SemiImplicitEulerKernel>(device_state.data(),
+            device_rhs.data(), n, dt, config.threads_per_block, kt);
+    backward_euler_picard_kernel = std::make_unique<BackwardEulerPicardKernel>(device_state.data(),
+            device_state_n.data(), device_rhs.data(), n, dt, config.threads_per_block, kt);
 
     device_energy = DeviceVector<float>(1);
     host_energy = HostVector<float>(1);
@@ -152,8 +155,8 @@ void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
 
     for (size_t i = 0; i < num_per_side; ++i) {
         for (size_t j = 0; j < num_per_side; ++j) {
-            host_state[4 * (i * num_per_side + j) + 0] = x0 + i * 2 * radius;
-            host_state[4 * (i * num_per_side + j) + 1] = y0 + j * 2 * radius;
+            host_state[4 * (i * num_per_side + j) + 0] = x0 + i * 2 * 1.01*radius;
+            host_state[4 * (i * num_per_side + j) + 1] = y0 + j * 2 * 1.01*radius;
             host_state[4 * (i * num_per_side + j) + 2] = 0.0f;
             host_state[4 * (i * num_per_side + j) + 3] = 0.0f;
         }
@@ -200,11 +203,23 @@ float ParticleDynamics::get_real_time_ratio() {
 
 
 void ParticleDynamics::take_step() {
-    (*find_neighbors_kernel)();
-    (*interpolate_force_kernel)();
-    (*compute_rhs_kernel)();
-    take_step_kernel->set_dt(dt);
-    (*take_step_kernel)();
+    if (config.time_integrator == "semi_implicit_euler") {
+        (*find_neighbors_kernel)();
+        (*interpolate_force_kernel)();
+        (*compute_rhs_kernel)();
+        semi_implicit_euler_kernel->set_dt(dt);
+        (*semi_implicit_euler_kernel)();
+    } else {
+        CUDA_CHECK(cudaMemcpy(device_state_n.data(), device_state.data(),
+                4 * n * sizeof(float), cudaMemcpyDeviceToDevice));
+        for (int k = 0; k < config.picard_iterations; ++k) {
+            (*find_neighbors_kernel)();
+            (*interpolate_force_kernel)();
+            (*compute_rhs_kernel)();
+            backward_euler_picard_kernel->set_dt(dt);
+            (*backward_euler_picard_kernel)();
+        }
+    }
     time += dt;
 }
 
@@ -238,6 +253,11 @@ void ParticleDynamics::update_occupancy_grid() {
 float ParticleDynamics::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
 float ParticleDynamics::interpolate_force_wct() const { return interpolate_force_kernel->wall_clock_time(); }
 float ParticleDynamics::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }
-float ParticleDynamics::take_step_wct()         const { return take_step_kernel->wall_clock_time(); }
+float ParticleDynamics::take_step_wct()         const {
+    if (config.time_integrator == "semi_implicit_euler") {
+        return semi_implicit_euler_kernel->wall_clock_time();
+    }
+    return backward_euler_picard_kernel->wall_clock_time();
+}
 
 ParticleDynamics::~ParticleDynamics() = default;

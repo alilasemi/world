@@ -106,6 +106,10 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "stability_dt_sweep") cfg.stability_dt_sweep = parse_float_list(value);
         else if (key == "kernel_timing") cfg.kernel_timing = b();
         else warn_unknown(section, key);
+    } else if (section == "time_integration") {
+        if (key == "solver") cfg.time_integrator = value;
+        else if (key == "picard_iterations") cfg.picard_iterations = i();
+        else warn_unknown(section, key);
     } else {
         warn_unknown(section, key);
     }

@@ -73,6 +73,10 @@ struct SimConfig {
     float stability_sim_time = 0.1f;
     std::vector<float> stability_dt_sweep{0.1f, 0.05f, 0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
     bool kernel_timing = true;
+
+    // Time integration
+    std::string time_integrator = "semi_implicit_euler";  // "semi_implicit_euler" | "backward_euler_picard"
+    int picard_iterations = 3;
 };
 
 // Loads a config from a YAML file, starting from defaults and overriding only

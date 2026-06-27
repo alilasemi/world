@@ -62,3 +62,7 @@ drivers:
   stability_sim_time: 0.1
   stability_dt_sweep: [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001]
   kernel_timing: true
+
+time_integration:
+  solver: semi_implicit_euler    # "semi_implicit_euler" or "backward_euler_picard"
+  picard_iterations: 3           # number of Picard iterations (only used by backward_euler_picard)
