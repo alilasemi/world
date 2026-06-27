@@ -7,7 +7,7 @@ class FindNeighborsKernel : public Kernel {
 public:
     FindNeighborsKernel(const float* state_, int n_, int grid_size_,
             int particles_per_cell_, const DomainParams domain_,
-            int threads_per_block_, int* neighbors_);
+            int threads_per_block_, int* neighbors_, bool timing_enabled_ = true);
     ~FindNeighborsKernel() override = default;
 
 private:

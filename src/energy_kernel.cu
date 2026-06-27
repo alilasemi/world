@@ -18,8 +18,9 @@ __global__ void energy_kernel(const float* state, const int* material, const flo
 
 
 EnergyKernel::EnergyKernel(const float* state_, const int* material_, const float* mass_,
-        const int n_, const PhysicsParams physics_, const int threads_per_block_, float* energy_)
-        : Kernel(n_, threads_per_block_), state(state_), material(material_), mass(mass_),
+        const int n_, const PhysicsParams physics_, const int threads_per_block_, float* energy_,
+        bool timing_enabled_)
+        : Kernel(n_, threads_per_block_, timing_enabled_), state(state_), material(material_), mass(mass_),
           physics(physics_), energy(energy_) {
 }
 

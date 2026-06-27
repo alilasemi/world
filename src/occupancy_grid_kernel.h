@@ -6,7 +6,7 @@
 class OccupancyGridKernel : public Kernel {
 public:
     OccupancyGridKernel(int* occupancy_, const float* state_, const int n_, const int m_,
-            const DomainParams domain_, const int threads_per_block_);
+            const DomainParams domain_, const int threads_per_block_, bool timing_enabled_ = true);
 
 private:
     int* occupancy;

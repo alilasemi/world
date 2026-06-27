@@ -62,26 +62,27 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     device_occupancy_grid = DeviceVector<int>(force_grid_size * force_grid_size);
 
     // Create CUDA kernels
+    const bool kt = config.kernel_timing;
     find_neighbors_kernel = std::make_unique<FindNeighborsKernel>(
             device_state.data(), n, grid_size, particles_per_cell, config.domain,
-            config.threads_per_block, device_neighbors.data());
+            config.threads_per_block, device_neighbors.data(), kt);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_neighbors.data(),
             device_body_force_x.data(), device_body_force_y.data(),
-            n, particles_per_cell, config.physics, config.threads_per_block, device_rhs.data());
+            n, particles_per_cell, config.physics, config.threads_per_block, device_rhs.data(), kt);
     take_step_kernel = std::make_unique<TakeStepKernel>(device_state.data(), device_rhs.data(), n, dt,
-            config.threads_per_block);
+            config.threads_per_block, kt);
 
     device_energy = DeviceVector<float>(1);
     host_energy = HostVector<float>(1);
     energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
-            device_mass.data(), n, config.physics, config.threads_per_block, device_energy.data());
+            device_mass.data(), n, config.physics, config.threads_per_block, device_energy.data(), kt);
 
     interpolate_force_kernel = std::make_unique<InterpolateForceKernel>(device_state.data(),
             device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size, config.domain,
-            config.threads_per_block, device_body_force_x.data(), device_body_force_y.data());
+            config.threads_per_block, device_body_force_x.data(), device_body_force_y.data(), kt);
     occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
-            device_state.data(), n, force_grid_size, config.domain, config.threads_per_block);
+            device_state.data(), n, force_grid_size, config.domain, config.threads_per_block, kt);
 }
 
 

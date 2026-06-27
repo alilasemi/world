@@ -106,8 +106,8 @@ __global__ void find_neighbors_kernel(
 FindNeighborsKernel::FindNeighborsKernel(
         const float* state_, const int n_, const int grid_size_,
         const int particles_per_cell_, const DomainParams domain_,
-        const int threads_per_block_, int* neighbors_)
-        : Kernel(n_, threads_per_block_), state(state_), grid_size(grid_size_),
+        const int threads_per_block_, int* neighbors_, bool timing_enabled_)
+        : Kernel(n_, threads_per_block_, timing_enabled_), state(state_), grid_size(grid_size_),
           particles_per_cell(particles_per_cell_), domain(domain_), neighbors(neighbors_),
           spatial_grid(static_cast<size_t>(grid_size_) * grid_size_),
           particles_in_cell(static_cast<size_t>(n_) * particles_per_cell_),

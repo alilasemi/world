@@ -55,6 +55,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         const std::string& value) {
     const auto f = [&value]() { return std::stof(value); };
     const auto i = [&value]() { return std::stoi(value); };
+    const auto b = [&value]() { return value == "true"; };
 
     if (section == "simulation") {
         if (key == "dt") cfg.dt = f();
@@ -103,6 +104,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "profiling_steps_per_iter") cfg.profiling_steps_per_iter = i();
         else if (key == "stability_sim_time") cfg.stability_sim_time = f();
         else if (key == "stability_dt_sweep") cfg.stability_dt_sweep = parse_float_list(value);
+        else if (key == "kernel_timing") cfg.kernel_timing = b();
         else warn_unknown(section, key);
     } else {
         warn_unknown(section, key);

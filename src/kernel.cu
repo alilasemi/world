@@ -1,7 +1,8 @@
 #include "kernel.h"
 #include "cuda_check.h"
 
-Kernel::Kernel(const int n_, const int threads_per_block_) : n(n_), threads_per_block(threads_per_block_) {
+Kernel::Kernel(const int n_, const int threads_per_block_, bool timing_enabled_)
+        : n(n_), threads_per_block(threads_per_block_), timing_enabled(timing_enabled_) {
     CUDA_CHECK(cudaEventCreate(&start_event));
     CUDA_CHECK(cudaEventCreate(&stop_event));
 }
@@ -29,9 +30,9 @@ void Kernel::stop_timer() {
 
 void Kernel::operator()() {
     int blocks = (n + threads_per_block - 1) / threads_per_block;
-    start_timer();
+    if (timing_enabled) start_timer();
     call_kernel(blocks, threads_per_block);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
-    stop_timer();
+    if (timing_enabled) stop_timer();
 }

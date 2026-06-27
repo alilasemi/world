@@ -7,7 +7,7 @@ class InterpolateForceKernel : public Kernel {
 public:
     InterpolateForceKernel(const float* state_, const float* grid_force_x_, const float* grid_force_y_,
             const int n_, const int m_, const DomainParams domain_, const int threads_per_block_,
-            float* force_x_, float* force_y_);
+            float* force_x_, float* force_y_, bool timing_enabled_ = true);
 
 private:
     const float* state;

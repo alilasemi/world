@@ -19,8 +19,8 @@ __global__ void occupancy_grid_kernel(int* occupancy, const float* state, size_t
 
 
 OccupancyGridKernel::OccupancyGridKernel(int* occupancy_, const float* state_, const int n_, const int m_,
-        const DomainParams domain_, const int threads_per_block_)
-        : Kernel(n_, threads_per_block_), occupancy(occupancy_), state(state_), m(m_), domain(domain_) {
+        const DomainParams domain_, const int threads_per_block_, bool timing_enabled_)
+        : Kernel(n_, threads_per_block_, timing_enabled_), occupancy(occupancy_), state(state_), m(m_), domain(domain_) {
 }
 
 

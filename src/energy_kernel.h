@@ -6,7 +6,8 @@
 class EnergyKernel : public Kernel {
 public:
     EnergyKernel(const float* state_, const int* material_, const float* mass_,
-            const int n_, const PhysicsParams physics_, const int threads_per_block_, float* energy_);
+            const int n_, const PhysicsParams physics_, const int threads_per_block_, float* energy_,
+            bool timing_enabled_ = true);
 
 private:
     const float* state;

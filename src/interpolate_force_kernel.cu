@@ -48,8 +48,8 @@ __global__ void interpolate_force_kernel(const float* state, const float* grid_f
 
 InterpolateForceKernel::InterpolateForceKernel(const float* state_, const float* grid_force_x_,
         const float* grid_force_y_, const int n_, const int m_, const DomainParams domain_,
-        const int threads_per_block_, float* force_x_, float* force_y_)
-        : Kernel(n_, threads_per_block_), state(state_), grid_force_x(grid_force_x_),
+        const int threads_per_block_, float* force_x_, float* force_y_, bool timing_enabled_)
+        : Kernel(n_, threads_per_block_, timing_enabled_), state(state_), grid_force_x(grid_force_x_),
           grid_force_y(grid_force_y_), m(m_), domain(domain_),
           force_x(force_x_), force_y(force_y_) {
 }

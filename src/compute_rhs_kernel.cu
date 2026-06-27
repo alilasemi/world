@@ -87,8 +87,8 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 ComputeRHSKernel::ComputeRHSKernel(const float* state_, const int* material_, const float* mass_,
             const int* neighbors_, const float* body_force_x_, const float* body_force_y_,
             const int n_, const int particles_per_cell_, const PhysicsParams physics_,
-            const int threads_per_block_, float* rhs_)
-        : Kernel(n_, threads_per_block_), state(state_), material(material_), mass(mass_), neighbors(neighbors_),
+            const int threads_per_block_, float* rhs_, bool timing_enabled_)
+        : Kernel(n_, threads_per_block_, timing_enabled_), state(state_), material(material_), mass(mass_), neighbors(neighbors_),
           body_force_x(body_force_x_), body_force_y(body_force_y_),
           particles_per_cell(particles_per_cell_), physics(physics_), rhs(rhs_) {
 }

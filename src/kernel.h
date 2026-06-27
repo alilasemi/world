@@ -3,7 +3,7 @@
 
 class Kernel {
 public:
-    explicit Kernel(const int n_, const int threads_per_block_ = 256);
+    explicit Kernel(const int n_, const int threads_per_block_ = 256, bool timing_enabled_ = true);
     virtual ~Kernel();
 
     // This is the interface for running the kernel
@@ -21,6 +21,8 @@ protected:
     // derived classes can override this if they want to use a different launch
     // configuration.
     const int n;
+
+    bool timing_enabled;
 
 private:
     const int threads_per_block;
