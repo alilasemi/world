@@ -67,3 +67,8 @@ drivers:
 time_integration:
   solver: semi_implicit_euler    # "semi_implicit_euler" or "backward_euler_picard"
   picard_iterations: 3           # number of Picard iterations (only used by backward_euler_picard)
+
+rl:
+  # Maximum body-force magnitude the RL agent can apply (N/kg). Distinct from
+  # physics.max_force, which caps the particle-particle repulsion penalty.
+  max_force: .1

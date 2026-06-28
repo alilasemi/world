@@ -9,3 +9,5 @@ dependencies:
   - numpy
   - matplotlib
   - scipy
+  - websockets
+  - pyyaml

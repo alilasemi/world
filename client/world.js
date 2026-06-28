@@ -317,10 +317,11 @@ class Client {
     hud;
     lastFrameStart;   // performance.now() at start of previous steady-state message
 
-    constructor(mode, ip) {
+    constructor(mode, ip, observeMode) {
         this.state = 0;
         this.mode = mode;
         this.ip = ip;
+        this.observeMode = observeMode;
         this.hud = document.getElementById('hud');
         this.lastFrameStart = null;
 
@@ -381,11 +382,15 @@ class Client {
             this.xy = new Float32Array(event.data);
             console.log('Received initial condition from server: ', this.xy);
             this.setup();
-            this.socket.send('run');
+            if (this.observeMode) {
+                this.socket.send('observe');
+            } else {
+                this.socket.send('run');
+            }
             ++this.state;
         } else {
             const restartButton = document.getElementById("restartButton");
-            if (restartButton.checked) {
+            if (!this.observeMode && restartButton.checked) {
                 this.state = 0;
                 this.lastFrameStart = null;
                 this.socket.send('initialize');
@@ -419,7 +424,9 @@ class Client {
                 this.graphics.render();
                 const tRender = performance.now() - t0Render;
 
-                this.socket.send('run');
+                if (!this.observeMode) {
+                    this.socket.send('run');
+                }
 
                 // Update HUD (after WS send so send latency is in "overhead")
                 const tServer = tFind + tInterp + tRhs + tStep + tUnpack;
@@ -470,7 +477,8 @@ class Client {
 
 
 function main(mode, ip) {
-    const client = new Client(mode, ip);
+    const observeMode = new URLSearchParams(window.location.search).has('observe');
+    const client = new Client(mode, ip, observeMode);
 }
 
 const config = await (await fetch('/config')).json();

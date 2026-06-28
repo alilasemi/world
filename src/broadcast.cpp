@@ -1,4 +1,5 @@
 #include "App.h"
+#include <cstring>
 #include <iostream>
 #include <string>
 using std::unique_ptr;
@@ -22,7 +23,7 @@ int main(int argc, char** argv) {
     app.ws<PerSocketData>("/*", {
         .open = [](auto *ws) {
         },
-        .message = [&sim, &config](auto *ws, std::string_view message, uWS::OpCode opCode) {
+        .message = [&sim, &config, &app](auto *ws, std::string_view message, uWS::OpCode opCode) {
             std::cout << "Received message: " << message << std::endl;
             if (opCode == uWS::OpCode::TEXT) {
                 if (message == "initialize") {
@@ -85,10 +86,49 @@ int main(int argc, char** argv) {
                     payload[n_xy + 6] = sim->time_unpack_state;
                     const char* state_data = reinterpret_cast<const char*>(payload.data());
                     size_t length = payload.size() * sizeof(float);
-                    ws->send(std::string_view(state_data, length), uWS::OpCode::BINARY);
+                    std::string_view state_sv(state_data, length);
+                    ws->send(state_sv, uWS::OpCode::BINARY);
+                    // Push to any passive observers (e.g. browser watching RL training).
+                    app.publish("state_updates", state_sv, uWS::OpCode::BINARY);
+                } else if (message == "observe") {
+                    // Register this socket as a passive observer: it will receive
+                    // a state push after every "run" step without driving the sim.
+                    ws->subscribe("state_updates");
+                } else if (message == "get_occupancy") {
+                    if (!sim) {
+                        std::cout << "get_occupancy: sim not initialized" << std::endl;
+                        return;
+                    }
+                    sim->update_occupancy_grid();
+                    const size_t m2 = (size_t)sim->force_grid_size * sim->force_grid_size;
+                    HostVector<int> host_occ(m2);
+                    host_occ.copy_from_device(sim->device_occupancy_grid);
+                    ws->send(std::string_view(
+                        reinterpret_cast<const char*>(host_occ.data()),
+                        m2 * sizeof(int)),
+                        uWS::OpCode::BINARY);
                 } else {
                     std::cout << "Unknown message: " << message << std::endl;
                 }
+            } else if (opCode == uWS::OpCode::BINARY) {
+                // Force-grid upload from RL agent.
+                // Payload: 2 * force_grid_size^2 floats, little-endian.
+                // First half: force_x (row-major cell_x*m + cell_y).
+                // Second half: force_y.
+                if (!sim) return;
+                const int m = sim->force_grid_size;
+                const size_t m2 = (size_t)m * m;
+                const size_t expected = 2 * m2 * sizeof(float);
+                if (message.size() != expected) {
+                    std::cout << "Force upload: unexpected size " << message.size()
+                              << " (expected " << expected << ")" << std::endl;
+                    return;
+                }
+                HostVector<float> host_fx(m2), host_fy(m2);
+                std::memcpy(host_fx.data(), message.data(), m2 * sizeof(float));
+                std::memcpy(host_fy.data(), message.data() + m2 * sizeof(float), m2 * sizeof(float));
+                sim->device_grid_force_x.copy_from_host(host_fx);
+                sim->device_grid_force_y.copy_from_host(host_fy);
             }
         }
     }).listen(config.port, [&config](auto *listen_socket) {
