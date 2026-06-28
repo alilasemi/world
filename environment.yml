@@ -1,0 +1,11 @@
+name: real-time-particles
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - pytorch
+  - numpy
+  - matplotlib
+  - scipy

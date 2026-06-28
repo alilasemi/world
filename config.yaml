@@ -8,8 +8,8 @@
 
 simulation:
   dt: 0.0001
-  grid_size: 32
-  particles_per_cell: 64
+  grid_size: 100
+  particles_per_cell: 4
   force_grid_size: 16
   threads_per_block: 256
 
@@ -56,7 +56,7 @@ rendering:
 
 drivers:
   port: 8081
-  steps_per_frame: 10
+  steps_per_frame: 50
   profiling_outer_iters: 10
   profiling_steps_per_iter: 10
   stability_sim_time: 0.1
