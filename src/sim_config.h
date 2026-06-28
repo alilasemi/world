@@ -78,6 +78,9 @@ struct SimConfig {
     // Time integration
     std::string time_integrator = "semi_implicit_euler";  // "semi_implicit_euler" | "backward_euler_picard"
     int picard_iterations = 3;
+
+    // RL agent
+    float rl_max_force = 0.1f;
 };
 
 // Loads a config from a YAML file, starting from defaults and overriding only

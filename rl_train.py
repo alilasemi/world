@@ -72,7 +72,9 @@ class ParticleEnv:
 
         msg = await self.ws.recv()
         self.n = struct.unpack_from('<i', msg)[0]
-        await self.ws.recv()   # grid_size (not needed here)
+        await self.ws.recv()   # grid_size
+        await self.ws.recv()   # force_grid_size
+        await self.ws.recv()   # rl_max_force
         await self.ws.recv()   # num_triangles
         await self.ws.recv()   # particle_radius
 

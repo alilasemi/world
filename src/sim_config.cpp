@@ -111,6 +111,9 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         if (key == "solver") cfg.time_integrator = value;
         else if (key == "picard_iterations") cfg.picard_iterations = i();
         else warn_unknown(section, key);
+    } else if (section == "rl") {
+        if (key == "max_force") cfg.rl_max_force = f();
+        else warn_unknown(section, key);
     } else {
         warn_unknown(section, key);
     }

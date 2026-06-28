@@ -85,6 +85,20 @@ const particleFragmentSource = `#version 300 es
     }
 `;
 
+// Force-field arrows are cyan, drawn with the same position-only vertex shader
+// as the grid. A separate fragment shader gives them their own color.
+const arrowFragmentSource = `#version 300 es
+
+    precision highp float;
+
+    out vec4 FragColor;
+
+    void main()
+    {
+        FragColor = vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    }
+`;
+
 // Grid lines are a fixed red, so unlike the particle shader, no per-vertex
 // color attribute is needed.
 const gridVertexSource = `#version 300 es
@@ -187,8 +201,16 @@ class Graphics {
     VAO_grid;
     gridShader;
     gridVertexCount;
+    VBO_forces;
+    VAO_forces;
+    forceShader;
+    forceVerts;
+    forceVertCount;
+    forceM;
+    rlMaxForce;
+    arrowMaxLen;
 
-    constructor(drawer, gridSize) {
+    constructor(drawer, gridSize, forceGridSize, rlMaxForce) {
         this.drawer = drawer;
         const canvas = document.querySelector("#gl-canvas");
         // Initialize the GL context
@@ -202,9 +224,10 @@ class Graphics {
             return;
         }
 
-        // Create shader
+        // Create shaders
         this.shader = new Shader(gl, particleVertexSource, particleFragmentSource);
         this.gridShader = new Shader(gl, gridVertexSource, gridFragmentSource);
+        this.forceShader = new Shader(gl, gridVertexSource, arrowFragmentSource);
 
         // Set clear color to black, fully opaque
         gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -246,14 +269,71 @@ class Graphics {
         gl.bufferData(gl.ARRAY_BUFFER, gridVertices, gl.STATIC_DRAW);
         gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
         gl.enableVertexAttribArray(0);
-        // Render loop
 
-//        render();
-//
-//        xx = xx.map(x => x + 0.5);
-//        xy = xy.map(y => y + 0.5);
-//        this.drawer.draw(xx, xy);
-//        render();
+        // Force-field arrows: dynamic geometry rebuilt each frame.
+        // Each cell gets 3 line segments (shaft + 2 arrowhead barbs) = 6 vertices.
+        this.forceM = forceGridSize;
+        this.rlMaxForce = rlMaxForce;
+        this.arrowMaxLen = (2.0 / forceGridSize) * 0.45;  // 45% of one cell width
+        this.forceVertCount = forceGridSize * forceGridSize * 6;
+        this.forceVerts = new Float32Array(this.forceVertCount * 3);  // xyz per vertex
+        this.VAO_forces = gl.createVertexArray();
+        this.VBO_forces = gl.createBuffer();
+        gl.bindVertexArray(this.VAO_forces);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_forces);
+        gl.bufferData(gl.ARRAY_BUFFER, this.forceVerts, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+        gl.enableVertexAttribArray(0);
+    }
+
+    // Rebuild arrow geometry from the current force grid and upload to GPU.
+    // forceX and forceY are Float32Array views of length m*m (row-major: x*m+y).
+    updateForces(forceX, forceY) {
+        const m = this.forceM;
+        const maxForce = this.rlMaxForce;
+        const arrowLen = this.arrowMaxLen;
+        let v = 0;
+        for (let i = 0; i < m; i++) {
+            for (let j = 0; j < m; j++) {
+                const cx = -1.0 + (i + 0.5) * 2.0 / m;
+                const cy = -1.0 + (j + 0.5) * 2.0 / m;
+                const fx = forceX[i * m + j];
+                const fy = forceY[i * m + j];
+                const mag = Math.sqrt(fx * fx + fy * fy);
+
+                if (mag < 1e-10) {
+                    // Degenerate arrow: all verts at center, draws nothing
+                    for (let k = 0; k < 18; k++) this.forceVerts[v++] = 0;
+                } else {
+                    const scale = Math.min(mag / maxForce, 1.0) * arrowLen;
+                    const ux = fx / mag;  // unit vector
+                    const uy = fy / mag;
+                    const ex = cx + ux * scale;
+                    const ey = cy + uy * scale;
+
+                    // Shaft: tail → head
+                    this.forceVerts[v++] = cx; this.forceVerts[v++] = cy; this.forceVerts[v++] = 0;
+                    this.forceVerts[v++] = ex; this.forceVerts[v++] = ey; this.forceVerts[v++] = 0;
+
+                    // Arrowhead barbs at ±150° from the shaft direction
+                    const hLen = scale * 0.4;
+                    const angle = Math.atan2(uy, ux);
+                    const a1 = angle + Math.PI * 5 / 6;
+                    const a2 = angle - Math.PI * 5 / 6;
+                    this.forceVerts[v++] = ex; this.forceVerts[v++] = ey; this.forceVerts[v++] = 0;
+                    this.forceVerts[v++] = ex + Math.cos(a1) * hLen;
+                    this.forceVerts[v++] = ey + Math.sin(a1) * hLen;
+                    this.forceVerts[v++] = 0;
+                    this.forceVerts[v++] = ex; this.forceVerts[v++] = ey; this.forceVerts[v++] = 0;
+                    this.forceVerts[v++] = ex + Math.cos(a2) * hLen;
+                    this.forceVerts[v++] = ey + Math.sin(a2) * hLen;
+                    this.forceVerts[v++] = 0;
+                }
+            }
+        }
+        const gl = this.gl;
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_forces);
+        gl.bufferData(gl.ARRAY_BUFFER, this.forceVerts, gl.DYNAMIC_DRAW);
     }
 
     render() {
@@ -277,6 +357,13 @@ class Graphics {
             this.gridShader.use();
             gl.bindVertexArray(this.VAO_grid);
             gl.drawArrays(gl.LINES, 0, this.gridVertexCount);
+        }
+
+        // Render force-field arrows between grid and particles
+        if (document.getElementById('forceFieldButton').checked) {
+            this.forceShader.use();
+            gl.bindVertexArray(this.VAO_forces);
+            gl.drawArrays(gl.LINES, 0, this.forceVertCount);
         }
 
         // Render the particles
@@ -309,6 +396,8 @@ class Client {
     state;
     n;
     gridSize;
+    forceGridSize;
+    rlMaxForce;
     xy;
     drawer;
     graphics;
@@ -364,21 +453,32 @@ class Client {
             console.log('Received gridSize from server: ', this.gridSize);
             ++this.state;
         } else if (this.state == 2) {
+            // Read force grid size (for drawing RL force-field arrows)
+            const dataView = new DataView(event.data);
+            this.forceGridSize = dataView.getInt32(0, true);
+            console.log('Received forceGridSize from server: ', this.forceGridSize);
+            ++this.state;
+        } else if (this.state == 3) {
+            // Read RL max force (for normalizing arrow lengths)
+            const dataView = new DataView(event.data);
+            this.rlMaxForce = dataView.getFloat32(0, true);
+            console.log('Received rlMaxForce from server: ', this.rlMaxForce);
+            ++this.state;
+        } else if (this.state == 4) {
             // Read rendering constant: triangles per particle (sent once at init)
             const dataView = new DataView(event.data);
             this.numTriangles = dataView.getInt32(0, true);
             console.log('Received numTriangles from server: ', this.numTriangles);
             ++this.state;
-        } else if (this.state == 3) {
+        } else if (this.state == 5) {
             // Read rendering constant: particle radius (sent once at init;
             // reuses the simulation's particle_radius)
             const dataView = new DataView(event.data);
             this.particleRadius = dataView.getFloat32(0, true);
             console.log('Received particleRadius from server: ', this.particleRadius);
             ++this.state;
-        } else if (this.state == 4) {
+        } else if (this.state == 6) {
             // Read initial condition
-            const dataView = new DataView(event.data);
             this.xy = new Float32Array(event.data);
             console.log('Received initial condition from server: ', this.xy);
             this.setup();
@@ -414,6 +514,16 @@ class Client {
                 const tRhs       = floats[base + 4];
                 const tStep      = floats[base + 5];
                 const tUnpack    = floats[base + 6];
+
+                // Update force-field arrows if the server sent force data
+                const forceBase = base + 7;
+                const m2 = this.forceGridSize * this.forceGridSize;
+                if (floats.length >= forceBase + 2 * m2) {
+                    this.graphics.updateForces(
+                        floats.subarray(forceBase, forceBase + m2),
+                        floats.subarray(forceBase + m2, forceBase + 2 * m2),
+                    );
+                }
 
                 // Client-side timers
                 const t0Draw = performance.now();
@@ -469,7 +579,7 @@ class Client {
         this.drawer = new ParticleDrawer(this.n, this.numTriangles, this.particleRadius);
         this.drawer.draw(this.xy)
         // Set up graphics
-        this.graphics = new Graphics(this.drawer, this.gridSize);
+        this.graphics = new Graphics(this.drawer, this.gridSize, this.forceGridSize, this.rlMaxForce);
         console.log("Initialized graphics");
         this.graphics.render();
     }

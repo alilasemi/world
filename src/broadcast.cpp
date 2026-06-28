@@ -39,6 +39,14 @@ int main(int argc, char** argv) {
                     const char* grid_size_data = reinterpret_cast<const char*>(&grid_size);
                     length = sizeof(grid_size);
                     ws->send(std::string_view(grid_size_data, length), uWS::OpCode::BINARY);
+                    // Send force grid size so the client can render the RL force field
+                    int32_t force_grid_size = sim->force_grid_size;
+                    const char* fgs_data = reinterpret_cast<const char*>(&force_grid_size);
+                    ws->send(std::string_view(fgs_data, sizeof(force_grid_size)), uWS::OpCode::BINARY);
+                    // Send RL max force so the client can normalize arrow lengths
+                    float rl_max_force = config.rl_max_force;
+                    const char* rlmf_data = reinterpret_cast<const char*>(&rl_max_force);
+                    ws->send(std::string_view(rlmf_data, sizeof(rl_max_force)), uWS::OpCode::BINARY);
                     // Send rendering constants (only at initialize, never per frame):
                     // number of triangles per particle, then the particle render
                     // radius (which reuses the simulation's particle_radius).
@@ -84,6 +92,15 @@ int main(int argc, char** argv) {
                     payload[n_xy + 4] = t_rhs;
                     payload[n_xy + 5] = t_step;
                     payload[n_xy + 6] = sim->time_unpack_state;
+                    // Append current force grids so the client can visualize the
+                    // RL agent's input. Zeros when no agent is connected.
+                    const size_t m2 = (size_t)sim->force_grid_size * sim->force_grid_size;
+                    HostVector<float> host_fx(m2), host_fy(m2);
+                    host_fx.copy_from_device(sim->device_grid_force_x);
+                    host_fy.copy_from_device(sim->device_grid_force_y);
+                    payload.insert(payload.end(), host_fx.data(), host_fx.data() + m2);
+                    payload.insert(payload.end(), host_fy.data(), host_fy.data() + m2);
+
                     const char* state_data = reinterpret_cast<const char*>(payload.data());
                     size_t length = payload.size() * sizeof(float);
                     std::string_view state_sv(state_data, length);
