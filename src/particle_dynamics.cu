@@ -14,6 +14,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     grid_size = config.grid_size;
     particles_per_cell = config.particles_per_cell;
     force_grid_size = config.force_grid_size;
+    occupancy_grid_size = config.occupancy_grid_size;
     dt = config.dt;
 
     // Initialize on host according to the configured initialization type.
@@ -60,7 +61,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
             static_cast<size_t>(force_grid_size) * static_cast<size_t>(force_grid_size) * sizeof(float)));
     CUDA_CHECK(cudaMemset(device_grid_force_y.data(), 0,
             static_cast<size_t>(force_grid_size) * static_cast<size_t>(force_grid_size) * sizeof(float)));
-    device_occupancy_grid = DeviceVector<int>(force_grid_size * force_grid_size);
+    device_occupancy_grid = DeviceVector<int>(occupancy_grid_size * occupancy_grid_size);
 
     // Create CUDA kernels
     const bool kt = config.kernel_timing;
@@ -85,7 +86,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
             device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size, config.domain,
             config.threads_per_block, device_body_force_x.data(), device_body_force_y.data(), kt);
     occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
-            device_state.data(), n, force_grid_size, config.domain, config.threads_per_block, kt);
+            device_state.data(), n, occupancy_grid_size, config.domain, config.threads_per_block, kt);
 }
 
 

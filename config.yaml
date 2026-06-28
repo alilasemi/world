@@ -10,7 +10,8 @@ simulation:
   dt: 0.0001
   grid_size: 100
   particles_per_cell: 4
-  force_grid_size: 16
+  force_grid_size: 16       # coarse grid for RL body-force output (m×m cells)
+  occupancy_grid_size: 32  # fine grid for RL occupancy observation (k×k cells)
   threads_per_block: 256
 
 # Simulation domain bounds. Particles are mapped into grid cells across this

@@ -29,6 +29,7 @@ public:
     int grid_size;
     int particles_per_cell;
     int force_grid_size;
+    int occupancy_grid_size;
 
     std::vector<float> xy;
 

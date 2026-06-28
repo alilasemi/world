@@ -37,6 +37,7 @@ struct SimConfig {
     int grid_size = 32;
     int particles_per_cell = 64;
     int force_grid_size = 16;
+    int occupancy_grid_size = 32;
     int threads_per_block = 256;
 
     // Domain bounds

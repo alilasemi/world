@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
                         return;
                     }
                     sim->update_occupancy_grid();
-                    const size_t m2 = (size_t)sim->force_grid_size * sim->force_grid_size;
+                    const size_t m2 = (size_t)sim->occupancy_grid_size * sim->occupancy_grid_size;
                     HostVector<int> host_occ(m2);
                     host_occ.copy_from_device(sim->device_occupancy_grid);
                     ws->send(std::string_view(

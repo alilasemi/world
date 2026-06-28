@@ -41,8 +41,9 @@ class SimCfg:
         def get(section, key, default):
             return raw.get(section, {}).get(key, default)
 
-        self.force_grid_size  = get('simulation', 'force_grid_size', 16)
-        self.max_force        = get('rl', 'max_force', 10.0)
+        self.force_grid_size      = get('simulation', 'force_grid_size', 16)
+        self.occupancy_grid_size  = get('simulation', 'occupancy_grid_size', 32)
+        self.max_force            = get('rl', 'max_force', 10.0)
         self.x_min            = get('domain', 'x_min', -1.0)
         self.x_max            = get('domain', 'x_max',  1.0)
         self.y_min            = get('domain', 'y_min', -1.0)
@@ -59,10 +60,11 @@ class ParticleEnv:
     """Async wrapper around the WebSocket simulation server."""
 
     def __init__(self, ws, cfg: SimCfg):
-        self.ws  = ws
-        self.cfg = cfg
-        self.m   = cfg.force_grid_size
-        self.n   = 0
+        self.ws    = ws
+        self.cfg   = cfg
+        self.f_m   = cfg.force_grid_size
+        self.occ_m = cfg.occupancy_grid_size
+        self.n     = 0
         self.xs  = np.zeros(1, dtype=np.float32)
         self.ys  = np.zeros(1, dtype=np.float32)
 
@@ -86,7 +88,7 @@ class ParticleEnv:
 
     async def step(self, action: np.ndarray):
         """Upload forces, advance sim, return (obs, reward, done)."""
-        # action shape: (2, m, m) — [0] = force_x, [1] = force_y, row-major
+        # action shape: (2, f_m, f_m) — [0] = force_x, [1] = force_y, row-major
         force_bytes = action.astype(np.float32).tobytes()
         await self.ws.send(force_bytes)   # BINARY → force upload, no response
 
@@ -109,7 +111,7 @@ class ParticleEnv:
     async def _get_occupancy(self) -> np.ndarray:
         await self.ws.send("get_occupancy")
         msg = await self.ws.recv()
-        m = self.m
+        m = self.occ_m
         return np.frombuffer(msg, dtype=np.int32).reshape(m, m).astype(np.float32)
 
     def _reward(self) -> float:
@@ -120,18 +122,21 @@ class ParticleEnv:
 # ── Model ─────────────────────────────────────────────────────────────────────
 
 class ActorCritic(nn.Module):
-    def __init__(self, m: int, max_force: float):
+    def __init__(self, occ_m: int, f_m: int, max_force: float):
         super().__init__()
         self.max_force = max_force
+        self.f_m = f_m
 
+        # Shared backbone — operates at occupancy-grid resolution
         self.backbone = nn.Sequential(
             nn.Conv2d(1, 16, 3, padding=1), nn.ReLU(),
             nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(),
             nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(),
         )
-        # Actor: outputs per-cell force mean for x and y
+        # Actor: downsample backbone features to force-grid resolution, then 1×1 conv
+        self.actor_pool = nn.AdaptiveAvgPool2d((f_m, f_m))
         self.actor_mean = nn.Conv2d(32, 2, 1)
-        # Learnable log-std shared across all grid cells
+        # Learnable log-std shared across all force-grid cells
         self.log_std = nn.Parameter(torch.full((2, 1, 1), -0.5))
 
         # Critic: pools spatial features → scalar value estimate
@@ -139,12 +144,13 @@ class ActorCritic(nn.Module):
         self.critic_fc   = nn.Linear(32 * 16, 1)
 
     def forward(self, obs: torch.Tensor):
-        """obs: (B, 1, m, m) → (mean, log_std, value)"""
-        feat  = self.backbone(obs)
-        mean  = torch.tanh(self.actor_mean(feat)) * self.max_force  # (B, 2, m, m)
+        """obs: (B, 1, occ_m, occ_m) → (mean (B,2,f_m,f_m), log_std, value)"""
+        feat    = self.backbone(obs)                                    # (B, 32, occ_m, occ_m)
+        a_feat  = self.actor_pool(feat)                                 # (B, 32, f_m, f_m)
+        mean    = torch.tanh(self.actor_mean(a_feat)) * self.max_force  # (B, 2, f_m, f_m)
         log_std = self.log_std.clamp(-2.0, 2.0).expand_as(mean)
         pooled  = self.critic_pool(feat).flatten(1)
-        value   = self.critic_fc(pooled).squeeze(-1)   # (B,)
+        value   = self.critic_fc(pooled).squeeze(-1)                    # (B,)
         return mean, log_std, value
 
     def act(self, obs: torch.Tensor):
@@ -222,10 +228,10 @@ def ppo_update(model, optimizer, obs_buf, act_buf, logp_buf, adv_buf, ret_buf,
 async def train(args, cfg: SimCfg):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
-    print(f"force_grid_size: {cfg.force_grid_size}  max_force: {cfg.max_force}")
+    print(f"occupancy_grid_size: {cfg.occupancy_grid_size}  "
+          f"force_grid_size: {cfg.force_grid_size}  max_force: {cfg.max_force}")
 
-    m     = cfg.force_grid_size
-    model = ActorCritic(m, cfg.max_force).to(device)
+    model = ActorCritic(cfg.occupancy_grid_size, cfg.force_grid_size, cfg.max_force).to(device)
     opt   = optim.Adam(model.parameters(), lr=args.lr)
 
     reward_history = []
