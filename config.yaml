@@ -26,6 +26,7 @@ physics:
   particle_radius: 0.01
   max_force: 100.0
   floor_y: -1.0
+  ceiling_y: 1.0
   left_wall_x: -1.0
   right_wall_x: 1.0
 
@@ -36,7 +37,7 @@ materials:
 initialization:
   type: cube                 # "cube" or "two_particles"
   x0: -0.5
-  y0: 0.0
+  y0: -0.5
   # cube: square grid of "snow" particles plus one "sled" particle on top.
   # Particle spacing is derived from physics.particle_radius.
   cube_length: 1.0

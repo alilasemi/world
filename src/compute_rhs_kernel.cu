@@ -11,6 +11,7 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
     const float g = physics.gravity;
     const float floor_y = physics.floor_y;
+    const float ceiling_y = physics.ceiling_y;
     const float left_wall_x = physics.left_wall_x;
     const float right_wall_x = physics.right_wall_x;
     const float max_force = physics.max_force;
@@ -33,6 +34,11 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         float floor_force = max(0.f, min(max_force, -max_force / radius * floor_dist));
         force_y += floor_force; // Repulsive force
         force_y -= floor_force * vy; // Damping based on velocity
+        // Ceiling force
+        float ceiling_dist = abs(y - ceiling_y) - radius;
+        float ceiling_force = max(0.f, min(max_force, -max_force / radius * ceiling_dist));
+        force_y -= ceiling_force; // Repulsive force
+        force_y -= ceiling_force * vy; // Damping based on velocity
         // Wall on the left
         float wall_dist_left = abs(x - left_wall_x) - radius;
         float left_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_left));

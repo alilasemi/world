@@ -22,6 +22,7 @@ struct PhysicsParams {
     float particle_radius;
     float max_force;
     float floor_y;
+    float ceiling_y;
     float left_wall_x;
     float right_wall_x;
 };
@@ -42,7 +43,7 @@ struct SimConfig {
     DomainParams domain{-1.0f, 1.0f, -1.0f, 1.0f};
 
     // Physics
-    PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, -1.0f, 1.0f};
+    PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, 1.0f, -1.0f, 1.0f};
 
     // Per-material masses, indexed by material id (0 = wall, 1 = snow, 2 = sled).
     std::vector<float> masses{0.0f, 0.04f, 0.04f};

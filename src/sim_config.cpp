@@ -75,6 +75,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "particle_radius") cfg.physics.particle_radius = f();
         else if (key == "max_force") cfg.physics.max_force = f();
         else if (key == "floor_y") cfg.physics.floor_y = f();
+        else if (key == "ceiling_y") cfg.physics.ceiling_y = f();
         else if (key == "left_wall_x") cfg.physics.left_wall_x = f();
         else if (key == "right_wall_x") cfg.physics.right_wall_x = f();
         else warn_unknown(section, key);
