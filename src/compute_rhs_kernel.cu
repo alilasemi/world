@@ -30,22 +30,22 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         force_y -= mass[mat] * g;
 
         // Floor force
-        float floor_dist = abs(y - floor_y) - radius;
+        float floor_dist = y - floor_y - radius;
         float floor_force = max(0.f, min(max_force, -max_force / radius * floor_dist));
         force_y += floor_force; // Repulsive force
         force_y -= floor_force * vy; // Damping based on velocity
         // Ceiling force
-        float ceiling_dist = abs(y - ceiling_y) - radius;
+        float ceiling_dist = ceiling_y - y - radius;
         float ceiling_force = max(0.f, min(max_force, -max_force / radius * ceiling_dist));
         force_y -= ceiling_force; // Repulsive force
         force_y -= ceiling_force * vy; // Damping based on velocity
         // Wall on the left
-        float wall_dist_left = abs(x - left_wall_x) - radius;
+        float wall_dist_left = x - left_wall_x - radius;
         float left_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_left));
         force_x += left_wall_force; // Repulsive force
         force_x -= left_wall_force * vx; // Damping based on velocity
         // Wall on the right
-        float wall_dist_right = abs(x - right_wall_x) - radius;
+        float wall_dist_right = right_wall_x - x - radius;
         float right_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_right));
         force_x -= right_wall_force; // Repulsive force
         force_x -= right_wall_force * vx; // Damping based on velocity
