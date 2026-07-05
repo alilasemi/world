@@ -5,7 +5,8 @@ Usage:
   python rl_train.py [--config config.yaml] [--launch-server] [--episodes 1000]
 
 Protocol (WebSocket):
-  TEXT "initialize"    → 5 BINARY messages: n, grid_size, num_triangles, radius, xy
+  TEXT "initialize"    → 8 BINARY messages: n, grid_size, force_grid_size, rl_max_force,
+                         num_triangles, particle_radius, domain_bounds, xy
   TEXT "get_occupancy" → BINARY: m*m int32 occupancy grid
   BINARY <2*m*m floats> → (no response) upload force grid
   TEXT "run"           → BINARY: (2*n + 7) floats = xy + metadata
@@ -79,6 +80,7 @@ class ParticleEnv:
         await self.ws.recv()   # rl_max_force
         await self.ws.recv()   # num_triangles
         await self.ws.recv()   # particle_radius
+        await self.ws.recv()   # domain bounds (x_min, x_max, y_min, y_max)
 
         msg = await self.ws.recv()   # n*2 floats: initial xy
         xy = np.frombuffer(msg, dtype=np.float32).reshape(self.n, 2)

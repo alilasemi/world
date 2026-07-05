@@ -35,11 +35,36 @@ const char* status_letter(Status s) {
     return "?";
 }
 
+// Prints one clean message and exits if the spatial grid has ever overflowed
+// particles_per_cell during this run -- instead of letting the old device
+// assert print once per dropped particle (potentially thousands of lines)
+// before CUDA_CHECK aborts. Still exits (rather than trying to recover the
+// combo), so the parent's existing crashed-child detection still classifies
+// it UNSTABLE, same as before -- just quietly.
+void check_grid_overflow(const ParticleDynamics& sim, float dt, float max_force) {
+    const int overflowed = sim.grid_overflow_count();
+    if (overflowed > 0) {
+        std::fprintf(stderr,
+                "stability_and_accuracy: dt=%.6g max_force=%.6g -- spatial grid overflowed "
+                "particles_per_cell capacity in %d cell-step(s); simulation has diverged. Exiting.\n",
+                static_cast<double>(dt), static_cast<double>(max_force), overflowed);
+        std::exit(1);
+    }
+}
+
 // Runs a single (dt, max_force) combo to config.stability_sim_time (or until
-// it settles / goes unstable, depending on config.stability_mode) and writes
-// "<energy> <status>" to out_path. Runs in a child process -- if a CUDA
-// error aborts the process (e.g. FindNeighborsKernel's grid-overflow assert
-// under a too-large dt), only this child dies, not the whole sweep.
+// it settles, in steady_state mode) and writes "<energy> <status>" to
+// out_path. Runs in a child process -- if it exits non-zero (e.g. via
+// check_grid_overflow() above), only this child dies, not the whole sweep.
+//
+// Whether the run is "unstable" is decided once, from the final state after
+// the loop below -- not from checking every intermediate step. A transient
+// excursion out of the domain mid-run (which the sim's penalty forces can
+// often recover from) shouldn't fail a combo that ends up fine; only where
+// it actually lands at t_max matters. Grid overflow is checked at the same
+// (infrequent) cadence as the steady_state accel check, plus once at the
+// end -- not every step, since a host sync every step would serialize what
+// would otherwise be async-queued kernel launches.
 void run_child(float dt, float max_force, const char* out_path, SimConfig config) {
     config.physics.max_force = max_force;
     ParticleDynamics sim(config);
@@ -50,21 +75,28 @@ void run_child(float dt, float max_force, const char* out_path, SimConfig config
     const bool steady_state_mode = (config.stability_mode == "steady_state");
     const float accel_cutoff = config.physics.gravity * config.stability_acceleration_cutoff;
 
-    // fixed_time mode: reaching the step cap without going unstable IS success.
-    // steady_state mode: reaching the step cap without settling is a timeout.
-    Status status = steady_state_mode ? Status::TIMED_OUT : Status::STEADY;
+    bool settled_early = false;
     for (int step = 0; step < num_steps; ++step) {
         sim.take_step();
-        if (!sim.is_stable()) {
-            status = Status::UNSTABLE;
-            break;
-        }
         if (steady_state_mode && (step + 1) % config.stability_steps_per_steadiness_check == 0) {
+            check_grid_overflow(sim, dt, max_force);
             if (sim.compute_max_acceleration() < accel_cutoff) {
-                status = Status::STEADY;
+                settled_early = true;
                 break;
             }
         }
+    }
+    check_grid_overflow(sim, dt, max_force);
+
+    // Final-state check takes priority: if it ends up out of the domain or
+    // non-finite, that's UNSTABLE regardless of what settled_early said.
+    Status status;
+    if (!sim.is_stable()) {
+        status = Status::UNSTABLE;
+    } else if (steady_state_mode) {
+        status = settled_early ? Status::STEADY : Status::TIMED_OUT;
+    } else {
+        status = Status::STEADY;
     }
 
     // Still report energy even when unstable -- it's informative (shows how
@@ -128,6 +160,16 @@ Result run_combo_in_subprocess(const std::string& self_path, float dt, float max
     }
 
     if (pid == 0) {
+        // Redirect stderr to /dev/null so a crashing child's error output
+        // (e.g. check_grid_overflow()'s message, or a rarer CUDA_CHECK
+        // abort) doesn't interleave with the live-updating status table on
+        // stdout. dup2 happens before execl so it carries over into the
+        // re-exec'd child-mode process. The table's 'X' for this cell and
+        // stability_results.dat already carry the machine-readable outcome.
+        FILE* devnull = fopen("/dev/null", "w");
+        if (devnull) {
+            dup2(fileno(devnull), STDERR_FILENO);
+        }
         execl(self_path.c_str(), self_path.c_str(), "--dt", dt_buf, "--max_force", max_force_buf,
                 "--out", out_path.c_str(), "--config", config_path.c_str(), nullptr);
         perror("execl");
@@ -166,8 +208,13 @@ void ensure_output_dir_exists() {
     }
 }
 
-// Effective (possibly crashed-overridden) status, for both printing and
-// plotting: a crashed child is treated as UNSTABLE either way.
+// Effective (possibly crashed-overridden) status, used everywhere a Result
+// is reported (live table, gnuplot, stability_results.dat): a crashed child
+// -- most commonly a grid overflow (see check_grid_overflow()) -- is folded
+// into UNSTABLE rather than shown as a distinct outcome. particles_per_cell
+// is set generously for this driver specifically, so an overflow means the
+// sim diverged badly enough to matter, not that the config is merely
+// under-provisioned.
 Status effective_status(const Result& r) {
     return r.crashed ? Status::UNSTABLE : r.status;
 }
@@ -292,8 +339,7 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
         for (std::size_t j = 0; j < max_forces.size(); ++j) {
             results[i][j] = run_combo_in_subprocess(self_path, dts[i], max_forces[j], config_path);
-            const Result& r = results[i][j];
-            printf("%-10s", r.crashed ? "X" : status_letter(r.status));
+            printf("%-10s", status_letter(effective_status(results[i][j])));
             std::fflush(stdout);
         }
         printf("\n");

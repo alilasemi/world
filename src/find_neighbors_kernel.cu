@@ -1,6 +1,8 @@
-#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
 #include "find_neighbors_kernel.h"
 #include "cuda_check.h"
+#include "host_vector.h"
 
 
 // Map a particle coordinate into a grid cell index, clamped to [0, grid_size).
@@ -47,8 +49,15 @@ __global__ void compact_cells_kernel(
 
 // Pass 3: each particle reserves a slot in its cell's compact row and writes
 // its index there. occ_idx is guaranteed ≥ 0 after the compact pass.
+//
+// A cell packing more particles than particles_per_cell would write past the
+// end of its row -- rather than asserting (which prints once per offending
+// thread, potentially thousands of lines, before the process aborts), drop
+// the excess particle from this step's neighbor search and mark the cell as
+// overflowed exactly once, so call_kernel can report a single clean error.
 __global__ void fill_cells_kernel(
         const int* spatial_grid, int* particles_in_cell, int* num_per_cell,
+        int* cell_overflowed, int* num_overflowed_cells,
         const float* state, int n, int grid_size, int particles_per_cell, DomainParams domain) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -57,7 +66,12 @@ __global__ void fill_cells_kernel(
         int cell_y = cell_index_y(state[4*i+1], domain, grid_size);
         int occ_idx = spatial_grid[cell_x * grid_size + cell_y];
         int slot = atomicAdd(&num_per_cell[occ_idx], 1);
-        assert(slot < particles_per_cell);
+        if (slot >= particles_per_cell) {
+            if (atomicCAS(&cell_overflowed[occ_idx], 0, 1) == 0) {
+                atomicAdd(num_overflowed_cells, 1);
+            }
+            continue;
+        }
         particles_in_cell[occ_idx * particles_per_cell + slot] = i;
     }
 }
@@ -112,12 +126,17 @@ FindNeighborsKernel::FindNeighborsKernel(
           spatial_grid(static_cast<size_t>(grid_size_) * grid_size_),
           particles_in_cell(static_cast<size_t>(n_) * particles_per_cell_),
           num_per_cell(static_cast<size_t>(n_)),
-          num_occupied_cells(1) {
+          num_occupied_cells(1),
+          cell_overflowed(static_cast<size_t>(n_)),
+          num_overflowed_cells(1) {
     CUDA_CHECK(cudaMemset(spatial_grid.data(), -1,
             static_cast<size_t>(grid_size_) * grid_size_ * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_per_cell.data(), 0,
             static_cast<size_t>(n_) * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_occupied_cells.data(), 0, sizeof(int)));
+    CUDA_CHECK(cudaMemset(cell_overflowed.data(), 0,
+            static_cast<size_t>(n_) * sizeof(int)));
+    CUDA_CHECK(cudaMemset(num_overflowed_cells.data(), 0, sizeof(int)));
 }
 
 
@@ -128,6 +147,14 @@ void FindNeighborsKernel::call_kernel(int blocks, int threads_per_block) {
     CUDA_CHECK(cudaMemset(num_per_cell.data(), 0,
             static_cast<size_t>(n) * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_occupied_cells.data(), 0, sizeof(int)));
+    // cell_overflowed needs a per-frame reset (an occ_idx from a previous
+    // frame means nothing this frame), but num_overflowed_cells is
+    // deliberately NOT reset here -- it's a lifetime-cumulative counter (see
+    // overflow_count()) so a caller can check it occasionally rather than
+    // needing a host sync after every single step to avoid missing a
+    // transient overflow.
+    CUDA_CHECK(cudaMemset(cell_overflowed.data(), 0,
+            static_cast<size_t>(n) * sizeof(int)));
 
     mark_cells_kernel<<<blocks, threads_per_block>>>(
             spatial_grid.data(), state, n, grid_size, domain);
@@ -139,9 +166,21 @@ void FindNeighborsKernel::call_kernel(int blocks, int threads_per_block) {
 
     fill_cells_kernel<<<blocks, threads_per_block>>>(
             spatial_grid.data(), particles_in_cell.data(), num_per_cell.data(),
+            cell_overflowed.data(), num_overflowed_cells.data(),
             state, n, grid_size, particles_per_cell, domain);
 
     find_neighbors_kernel<<<blocks, threads_per_block>>>(
             spatial_grid.data(), particles_in_cell.data(), num_per_cell.data(),
             state, neighbors, n, grid_size, particles_per_cell, domain);
+}
+
+
+// Lazy, on-demand readback -- deliberately not called from call_kernel itself
+// (a host sync every step serializes what would otherwise be async-queued
+// kernel launches, which is expensive over many steps). Callers that want to
+// detect a diverged simulation should poll this occasionally instead.
+int FindNeighborsKernel::overflow_count() const {
+    HostVector<int> host_count(1);
+    host_count.copy_from_device(num_overflowed_cells);
+    return host_count[0];
 }

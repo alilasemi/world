@@ -398,6 +398,7 @@ class Client {
     gridSize;
     forceGridSize;
     rlMaxForce;
+    domain;
     xy;
     drawer;
     graphics;
@@ -478,6 +479,19 @@ class Client {
             console.log('Received particleRadius from server: ', this.particleRadius);
             ++this.state;
         } else if (this.state == 6) {
+            // Read domain bounds (x_min, x_max, y_min, y_max), for the
+            // in-domain particle counter -- same bounds the server's
+            // is_stable() checks.
+            const dataView = new DataView(event.data);
+            this.domain = {
+                xMin: dataView.getFloat32(0, true),
+                xMax: dataView.getFloat32(4, true),
+                yMin: dataView.getFloat32(8, true),
+                yMax: dataView.getFloat32(12, true),
+            };
+            console.log('Received domain bounds from server: ', this.domain);
+            ++this.state;
+        } else if (this.state == 7) {
             // Read initial condition
             this.xy = new Float32Array(event.data);
             console.log('Received initial condition from server: ', this.xy);
@@ -545,9 +559,22 @@ class Client {
                 const ft      = frameTime ?? 0;
                 const pct = (ms) => ft > 0 ? ms / ft * 100 : 0;
 
+                // Count particles currently within domain bounds vs. the total --
+                // same bounds check as the server's ParticleDynamics::is_stable().
+                let numInDomain = 0;
+                for (let i = 0; i < this.n; ++i) {
+                    const x = this.xy[2 * i + 0];
+                    const y = this.xy[2 * i + 1];
+                    if (x >= this.domain.xMin && x <= this.domain.xMax &&
+                            y >= this.domain.yMin && y <= this.domain.yMax) {
+                        ++numInDomain;
+                    }
+                }
+
                 const sep = '─'.repeat(38);
                 const lines = [
                     `Sim time: ${simTime.toFixed(4)} s    Realtime ratio: ${rtRatio.toFixed(2)}×`,
+                    `Particles in domain: ${numInDomain} / ${this.n}`,
                     '',
                     frameTime !== null
                         ? `Frame time:          ${ft.toFixed(1).padStart(7)} ms`

@@ -107,6 +107,12 @@ public:
     // ComputeRHSKernel pass (device_rhs[4i+2], [4i+3]).
     float compute_max_acceleration();
 
+    // Lifetime-cumulative count of spatial-grid overflow incidents (see
+    // FindNeighborsKernel::overflow_count()) -- a nonzero value means the
+    // simulation has diverged badly enough to overflow particles_per_cell at
+    // some point. Not checked automatically every step; poll occasionally.
+    int grid_overflow_count() const;
+
     // Refreshes device_occupancy_grid from current particle positions. Not
     // called from take_step() -- a future AI-driving loop must call this
     // itself before reading device_occupancy_grid back to host; the snapshot

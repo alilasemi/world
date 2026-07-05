@@ -267,6 +267,9 @@ void ParticleDynamics::update_occupancy_grid() {
 }
 
 
+int ParticleDynamics::grid_overflow_count() const { return find_neighbors_kernel->overflow_count(); }
+
+
 float ParticleDynamics::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
 float ParticleDynamics::interpolate_force_wct() const { return interpolate_force_kernel->wall_clock_time(); }
 float ParticleDynamics::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }

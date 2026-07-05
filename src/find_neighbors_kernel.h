@@ -10,6 +10,15 @@ public:
             int threads_per_block_, int* neighbors_, bool timing_enabled_ = true);
     ~FindNeighborsKernel() override = default;
 
+    // Lifetime-cumulative count of (cell, step)-overflow incidents -- i.e.
+    // how many times, across every step so far, a cell's particle count
+    // exceeded particles_per_cell (see fill_cells_kernel). Never reset, and
+    // deliberately not checked automatically every step (that would force a
+    // host sync per step); callers that want to detect a diverged
+    // simulation without a device-assert flood should poll this
+    // occasionally instead.
+    int overflow_count() const;
+
 private:
     const float* state;
     const int grid_size;
@@ -27,6 +36,15 @@ private:
     DeviceVector<int> particles_in_cell;     // n*k
     DeviceVector<int> num_per_cell;          // n (max n occupied cells)
     DeviceVector<int> num_occupied_cells; // 1
+
+    // Overflow tracking for the fill pass: cell_overflowed[occ_idx] is set
+    // once a cell's particle count exceeds particles_per_cell (further
+    // particles for that cell are dropped rather than written out of
+    // bounds); reset every frame. num_overflowed_cells counts overflow
+    // incidents and, unlike everything else here, is NOT reset per frame --
+    // see overflow_count().
+    DeviceVector<int> cell_overflowed;    // n (max n occupied cells)
+    DeviceVector<int> num_overflowed_cells; // 1
 
     void call_kernel(int blocks, int threads_per_block) override;
 };

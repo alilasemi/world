@@ -1,4 +1,5 @@
 #include "App.h"
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -58,6 +59,15 @@ int main(int argc, char** argv) {
                     const char* radius_data = reinterpret_cast<const char*>(&particle_radius);
                     length = sizeof(particle_radius);
                     ws->send(std::string_view(radius_data, length), uWS::OpCode::BINARY);
+                    // Send domain bounds so the client can count how many particles
+                    // are currently inside vs. the total (same bounds is_stable()
+                    // checks server-side). One message, 4 floats: x_min/x_max/y_min/y_max.
+                    const float domain_bounds[4] = {
+                        sim->config.domain.x_min, sim->config.domain.x_max,
+                        sim->config.domain.y_min, sim->config.domain.y_max,
+                    };
+                    ws->send(std::string_view(reinterpret_cast<const char*>(domain_bounds),
+                            sizeof(domain_bounds)), uWS::OpCode::BINARY);
                     // Send state vector, sim.xy, which is vector<float>
                     const char* state_data = reinterpret_cast<const char*>(sim->xy.data());
                     length = sim->xy.size() * sizeof(float);
@@ -71,6 +81,19 @@ int main(int argc, char** argv) {
                     float step0  = sim->take_step_wct();
                     for (int steps = 0; steps < config.steps_per_frame; ++steps) {
                         sim->take_step();
+                    }
+                    // Checked once per steps_per_frame batch (i.e. once per
+                    // "run" message) rather than every step -- a host sync
+                    // that often would serialize what would otherwise be
+                    // async-queued kernel launches. See
+                    // stability_and_accuracy.cpp's check_grid_overflow() for
+                    // the same idea applied to the sweep driver.
+                    const int overflowed = sim->grid_overflow_count();
+                    if (overflowed > 0) {
+                        std::cerr << "world: spatial grid overflowed particles_per_cell capacity in "
+                                  << overflowed << " cell-step(s) (dt=" << sim->dt
+                                  << "); simulation has diverged. Exiting." << std::endl;
+                        std::exit(1);
                     }
                     float t_find  = sim->find_neighbors_wct()  - find0;
                     float t_interp = sim->interpolate_force_wct() - interp0;
