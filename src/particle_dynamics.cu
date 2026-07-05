@@ -246,6 +246,22 @@ bool ParticleDynamics::is_stable() {
 }
 
 
+float ParticleDynamics::compute_max_acceleration() {
+    HostVector<float> host_rhs(device_rhs.size());
+    host_rhs.copy_from_device(device_rhs);
+    float max_accel = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        const float ax = host_rhs[4 * i + 2];
+        const float ay = host_rhs[4 * i + 3];
+        const float accel = std::sqrt(ax * ax + ay * ay);
+        if (accel > max_accel) {
+            max_accel = accel;
+        }
+    }
+    return max_accel;
+}
+
+
 void ParticleDynamics::update_occupancy_grid() {
     (*occupancy_grid_kernel)();
 }

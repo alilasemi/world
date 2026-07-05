@@ -6,3 +6,6 @@ build/
 external/
 node_modules/
 package-lock.json
+stability_results.dat
+stability_plot.gp
+stability_plot.png

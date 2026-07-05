@@ -1,15 +1,17 @@
-# Particle simulation configuration.
+# Particle simulation configuration, tuned for the stability/stiffness sweep
+# in build/bin/stability_and_accuracy.
 #
-# Every value here matches the constant that was previously hardcoded in the
-# source, so running with this file reproduces the original behavior. The loader
-# (src/sim_config.cpp) reads a simple subset of YAML: top-level "section:"
-# headers, indented "key: value" lines, "[a, b, c]" inline lists, and # comments.
-# Any key omitted falls back to the built-in default; an absent file is fine too.
+# This is a copy of the root config.yaml (see that file for the full field
+# reference) with the "stability:" section set up for a steady-state dt x
+# max_force exploration rather than the default fixed-time single-dt sweep.
+# The loader (src/sim_config.cpp) reads a simple subset of YAML: top-level
+# "section:" headers, indented "key: value" lines, "[a, b, c]" inline lists,
+# and # comments. Any key omitted falls back to the built-in default.
 
 simulation:
   dt: 0.0001
-  grid_size: 100
-  particles_per_cell: 4
+  grid_size: 200
+  particles_per_cell: 1000
   force_grid_size: 16       # coarse grid for RL body-force output (m×m cells)
   occupancy_grid_size: 32  # fine grid for RL occupancy observation (k×k cells)
   threads_per_block: 256
@@ -24,8 +26,8 @@ domain:
 
 physics:
   gravity: 9.81
-  particle_radius: 0.01
-  max_force: 100.0
+  particle_radius: 0.005
+  max_force: 8
   floor_y: -1.0
   ceiling_y: 1.0
   left_wall_x: -1.0
@@ -33,7 +35,7 @@ physics:
 
 materials:
   # Per-material masses, indexed by material id: 0 = wall, 1 = snow, 2 = sled.
-  masses: [0.0, 0.04, 0.04]
+  masses: [0.0, 0.01, 0.01]
 
 initialization:
   type: cube                 # "cube" or "two_particles"
@@ -63,8 +65,20 @@ drivers:
   profiling_steps_per_iter: 10
   kernel_timing: true
 
-# build/bin/stability_and_accuracy sweep parameters live in stability/config.yaml,
-# not here -- this file is for world/profile.
+# Sweep parameters for build/bin/stability_and_accuracy. This config runs the
+# steady-state x max_force stiffness exploration: for every (dt, max_force)
+# cell, keep stepping (up to sim_time) until the max particle acceleration
+# drops below acceleration_cutoff * gravity, checking every
+# steps_per_steadiness_check steps. Produces stability_results.dat and a
+# stability_plot.png (red = went unstable, green = reached steady state,
+# yellow = ran to sim_time without either).
+stability:
+  mode: steady_state
+  sim_time: 1.0
+  dt_sweep: [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001]
+  max_force_sweep: [10.0, 30.0, 100.0, 300.0, 1000.0]
+  acceleration_cutoff: 0.01
+  steps_per_steadiness_check: 10
 
 time_integration:
   solver: semi_implicit_euler    # "semi_implicit_euler" or "backward_euler_picard"

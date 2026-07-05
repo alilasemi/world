@@ -103,6 +103,10 @@ public:
     // (x, y) is finite and within the [-1, 1]x[-1, 1] domain.
     bool is_stable();
 
+    // Max |acceleration| over all particles, from the most recent take_step()'s
+    // ComputeRHSKernel pass (device_rhs[4i+2], [4i+3]).
+    float compute_max_acceleration();
+
     // Refreshes device_occupancy_grid from current particle positions. Not
     // called from take_step() -- a future AI-driving loop must call this
     // itself before reading device_occupancy_grid back to host; the snapshot

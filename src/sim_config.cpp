@@ -104,9 +104,15 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "steps_per_frame") cfg.steps_per_frame = i();
         else if (key == "profiling_outer_iters") cfg.profiling_outer_iters = i();
         else if (key == "profiling_steps_per_iter") cfg.profiling_steps_per_iter = i();
-        else if (key == "stability_sim_time") cfg.stability_sim_time = f();
-        else if (key == "stability_dt_sweep") cfg.stability_dt_sweep = parse_float_list(value);
         else if (key == "kernel_timing") cfg.kernel_timing = b();
+        else warn_unknown(section, key);
+    } else if (section == "stability") {
+        if (key == "mode") cfg.stability_mode = unquote(value);
+        else if (key == "sim_time") cfg.stability_sim_time = f();
+        else if (key == "dt_sweep") cfg.stability_dt_sweep = parse_float_list(value);
+        else if (key == "max_force_sweep") cfg.stability_max_force_sweep = parse_float_list(value);
+        else if (key == "acceleration_cutoff") cfg.stability_acceleration_cutoff = f();
+        else if (key == "steps_per_steadiness_check") cfg.stability_steps_per_steadiness_check = i();
         else warn_unknown(section, key);
     } else if (section == "time_integration") {
         if (key == "solver") cfg.time_integrator = value;

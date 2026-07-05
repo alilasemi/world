@@ -59,9 +59,10 @@ drivers:
   steps_per_frame: 100
   profiling_outer_iters: 10
   profiling_steps_per_iter: 20
-  stability_sim_time: 1.0
-  stability_dt_sweep: [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001, 0.00005]
   kernel_timing: true
+
+# build/bin/stability_and_accuracy sweep parameters live in stability/config.yaml,
+# not here -- this file is for world/profile.
 
 time_integration:
   solver: semi_implicit_euler  # "semi_implicit_euler" or "backward_euler_picard"

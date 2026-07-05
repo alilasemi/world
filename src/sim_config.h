@@ -72,9 +72,15 @@ struct SimConfig {
     int steps_per_frame = 10;
     int profiling_outer_iters = 10;
     int profiling_steps_per_iter = 10;
-    float stability_sim_time = 0.1f;
-    std::vector<float> stability_dt_sweep{0.1f, 0.05f, 0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
     bool kernel_timing = true;
+
+    // Stability & accuracy driver (build/bin/stability_and_accuracy)
+    std::string stability_mode = "fixed_time";  // "fixed_time" | "steady_state"
+    float stability_sim_time = 0.1f;            // max simulated time per run (cap in both modes)
+    std::vector<float> stability_dt_sweep{0.1f, 0.05f, 0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
+    std::vector<float> stability_max_force_sweep{100.0f};  // 2nd sweep axis; 1 value = old 1D behavior
+    float stability_acceleration_cutoff = 0.01f;  // steady when max|accel| < cutoff * gravity
+    int stability_steps_per_steadiness_check = 100;  // how often (in steps) to test steadiness
 
     // Time integration
     std::string time_integrator = "semi_implicit_euler";  // "semi_implicit_euler" | "backward_euler_picard"
