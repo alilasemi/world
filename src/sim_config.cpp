@@ -59,10 +59,13 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
 
     if (section == "simulation") {
         if (key == "dt") cfg.dt = f();
-        else if (key == "grid_size") cfg.grid_size = i();
+        else if (key == "collision_grid_size_x") cfg.collision_grid_size_x = i();
+        else if (key == "collision_grid_size_y") cfg.collision_grid_size_y = i();
         else if (key == "particles_per_cell") cfg.particles_per_cell = i();
-        else if (key == "force_grid_size") cfg.force_grid_size = i();
-        else if (key == "occupancy_grid_size") cfg.occupancy_grid_size = i();
+        else if (key == "force_grid_size_x") cfg.force_grid_size_x = i();
+        else if (key == "force_grid_size_y") cfg.force_grid_size_y = i();
+        else if (key == "occupancy_grid_size_x") cfg.occupancy_grid_size_x = i();
+        else if (key == "occupancy_grid_size_y") cfg.occupancy_grid_size_y = i();
         else if (key == "threads_per_block") cfg.threads_per_block = i();
         else warn_unknown(section, key);
     } else if (section == "domain") {
@@ -90,7 +93,8 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "y0") cfg.init_y0 = f();
         else if (key == "vx0") cfg.init_vx0 = f();
         else if (key == "vy0") cfg.init_vy0 = f();
-        else if (key == "cube_length") cfg.cube_length = f();
+        else if (key == "cube_length_x") cfg.cube_length_x = f();
+        else if (key == "cube_length_y") cfg.cube_length_y = f();
         else if (key == "sled_x") cfg.sled_x = f();
         else if (key == "sled_y") cfg.sled_y = f();
         else if (key == "sled_vx") cfg.sled_vx = f();

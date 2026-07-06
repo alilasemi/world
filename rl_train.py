@@ -5,10 +5,11 @@ Usage:
   python rl_train.py [--config config.yaml] [--launch-server] [--episodes 1000]
 
 Protocol (WebSocket):
-  TEXT "initialize"    → 8 BINARY messages: n, grid_size, force_grid_size, rl_max_force,
-                         num_triangles, particle_radius, domain_bounds, xy
-  TEXT "get_occupancy" → BINARY: m*m int32 occupancy grid
-  BINARY <2*m*m floats> → (no response) upload force grid
+  TEXT "initialize"    → 8 BINARY messages: n, collision_grid_size (x,y int32),
+                         force_grid_size (x,y int32), rl_max_force, num_triangles,
+                         particle_radius, domain_bounds, xy
+  TEXT "get_occupancy" → BINARY: occ_m_x*occ_m_y int32 occupancy grid
+  BINARY <2*f_m_x*f_m_y floats> → (no response) upload force grid
   TEXT "run"           → BINARY: (2*n + 7) floats = xy + metadata
 """
 
@@ -42,8 +43,10 @@ class SimCfg:
         def get(section, key, default):
             return raw.get(section, {}).get(key, default)
 
-        self.force_grid_size      = get('simulation', 'force_grid_size', 16)
-        self.occupancy_grid_size  = get('simulation', 'occupancy_grid_size', 32)
+        self.force_grid_size_x     = get('simulation', 'force_grid_size_x', 16)
+        self.force_grid_size_y     = get('simulation', 'force_grid_size_y', 16)
+        self.occupancy_grid_size_x = get('simulation', 'occupancy_grid_size_x', 32)
+        self.occupancy_grid_size_y = get('simulation', 'occupancy_grid_size_y', 32)
         self.max_force            = get('rl', 'max_force', 10.0)
         self.x_min            = get('domain', 'x_min', -1.0)
         self.x_max            = get('domain', 'x_max',  1.0)
@@ -63,8 +66,10 @@ class ParticleEnv:
     def __init__(self, ws, cfg: SimCfg):
         self.ws    = ws
         self.cfg   = cfg
-        self.f_m   = cfg.force_grid_size
-        self.occ_m = cfg.occupancy_grid_size
+        self.f_m_x   = cfg.force_grid_size_x
+        self.f_m_y   = cfg.force_grid_size_y
+        self.occ_m_x = cfg.occupancy_grid_size_x
+        self.occ_m_y = cfg.occupancy_grid_size_y
         self.n     = 0
         self.xs  = np.zeros(1, dtype=np.float32)
         self.ys  = np.zeros(1, dtype=np.float32)
@@ -75,8 +80,8 @@ class ParticleEnv:
 
         msg = await self.ws.recv()
         self.n = struct.unpack_from('<i', msg)[0]
-        await self.ws.recv()   # grid_size
-        await self.ws.recv()   # force_grid_size
+        await self.ws.recv()   # collision_grid_size (x, y)
+        await self.ws.recv()   # force_grid_size (x, y)
         await self.ws.recv()   # rl_max_force
         await self.ws.recv()   # num_triangles
         await self.ws.recv()   # particle_radius
@@ -90,7 +95,7 @@ class ParticleEnv:
 
     async def step(self, action: np.ndarray):
         """Upload forces, advance sim, return (obs, reward, done)."""
-        # action shape: (2, f_m, f_m) — [0] = force_x, [1] = force_y, row-major
+        # action shape: (2, f_m_x, f_m_y) — [0] = force_x, [1] = force_y, row-major
         force_bytes = action.astype(np.float32).tobytes()
         await self.ws.send(force_bytes)   # BINARY → force upload, no response
 
@@ -113,8 +118,8 @@ class ParticleEnv:
     async def _get_occupancy(self) -> np.ndarray:
         await self.ws.send("get_occupancy")
         msg = await self.ws.recv()
-        m = self.occ_m
-        return np.frombuffer(msg, dtype=np.int32).reshape(m, m).astype(np.float32)
+        return np.frombuffer(msg, dtype=np.int32).reshape(
+                self.occ_m_x, self.occ_m_y).astype(np.float32)
 
     def _reward(self) -> float:
         dists = np.sqrt((self.xs - self.cfg.cx) ** 2 + (self.ys - self.cfg.cy) ** 2)
@@ -124,10 +129,11 @@ class ParticleEnv:
 # ── Model ─────────────────────────────────────────────────────────────────────
 
 class ActorCritic(nn.Module):
-    def __init__(self, occ_m: int, f_m: int, max_force: float):
+    def __init__(self, occ_m_x: int, occ_m_y: int, f_m_x: int, f_m_y: int, max_force: float):
         super().__init__()
         self.max_force = max_force
-        self.f_m = f_m
+        self.f_m_x = f_m_x
+        self.f_m_y = f_m_y
 
         # Shared backbone — operates at occupancy-grid resolution
         self.backbone = nn.Sequential(
@@ -136,7 +142,7 @@ class ActorCritic(nn.Module):
             nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(),
         )
         # Actor: downsample backbone features to force-grid resolution, then 1×1 conv
-        self.actor_pool = nn.AdaptiveAvgPool2d((f_m, f_m))
+        self.actor_pool = nn.AdaptiveAvgPool2d((f_m_x, f_m_y))
         self.actor_mean = nn.Conv2d(32, 2, 1)
         # Learnable log-std shared across all force-grid cells
         self.log_std = nn.Parameter(torch.full((2, 1, 1), -0.5))
@@ -230,10 +236,11 @@ def ppo_update(model, optimizer, obs_buf, act_buf, logp_buf, adv_buf, ret_buf,
 async def train(args, cfg: SimCfg):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
-    print(f"occupancy_grid_size: {cfg.occupancy_grid_size}  "
-          f"force_grid_size: {cfg.force_grid_size}  max_force: {cfg.max_force}")
+    print(f"occupancy_grid_size: {cfg.occupancy_grid_size_x}x{cfg.occupancy_grid_size_y}  "
+          f"force_grid_size: {cfg.force_grid_size_x}x{cfg.force_grid_size_y}  max_force: {cfg.max_force}")
 
-    model = ActorCritic(cfg.occupancy_grid_size, cfg.force_grid_size, cfg.max_force).to(device)
+    model = ActorCritic(cfg.occupancy_grid_size_x, cfg.occupancy_grid_size_y,
+                         cfg.force_grid_size_x, cfg.force_grid_size_y, cfg.max_force).to(device)
     opt   = optim.Adam(model.parameters(), lr=args.lr)
 
     reward_history = []

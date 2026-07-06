@@ -38,12 +38,19 @@ struct PhysicsParams {
 // SimConfig reproduces the original behavior exactly (important: the tests and
 // the profiling/stability drivers rely on the default-constructed sim).
 struct SimConfig {
-    // Simulation / grid
+    // Simulation / grid. All three grids (collision, force, occupancy) can
+    // have independent x/y cell counts -- the collision grid is used for
+    // neighbor lookup (see FindNeighborsKernel / "collision_grid" there),
+    // distinct from the force grid (RL action output) and occupancy grid
+    // (RL observation input).
     float dt = 0.0001f;
-    int grid_size = 32;
+    int collision_grid_size_x = 32;
+    int collision_grid_size_y = 32;
     int particles_per_cell = 64;
-    int force_grid_size = 16;
-    int occupancy_grid_size = 32;
+    int force_grid_size_x = 16;
+    int force_grid_size_y = 16;
+    int occupancy_grid_size_x = 32;
+    int occupancy_grid_size_y = 32;
     int threads_per_block = 256;
 
     // Domain bounds
@@ -61,7 +68,8 @@ struct SimConfig {
     float init_y0 = 0.0f;
     float init_vx0 = 0.0f;  // single_particle only; cube/two_particles always start at rest
     float init_vy0 = 0.0f;
-    float cube_length = 1.0f;  // particle spacing is derived from physics.particle_radius
+    float cube_length_x = 1.0f;  // particle spacing is derived from physics.particle_radius
+    float cube_length_y = 1.0f;
     float sled_x = -0.9f;
     float sled_y = 0.9f;
     float sled_vx = 0.4f;

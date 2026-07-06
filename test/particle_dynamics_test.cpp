@@ -36,7 +36,7 @@ TEST(ParticleDynamicsTest, BodyForceCancelsGravity) {
 
     const float g = 9.81f; // must match compute_rhs_kernel.cu's local g
     const float mass = sim.host_mass[1]; // snow & sled share mass 0.04 here
-    HostVector<float> force_y(static_cast<size_t>(sim.force_grid_size) * static_cast<size_t>(sim.force_grid_size));
+    HostVector<float> force_y(static_cast<size_t>(sim.force_grid_size_x) * static_cast<size_t>(sim.force_grid_size_y));
     for (size_t i = 0; i < force_y.size(); ++i) {
         force_y[i] = mass * g;
     }
@@ -93,9 +93,9 @@ TEST(ParticleDynamicsTest, OccupancyGridMarksCorrectCell) {
     sim.host_state[1] = 0.0f; // cell (8,8) of 16x16
     sim.device_state.copy_from_host(sim.host_state);
     sim.update_occupancy_grid();
-    HostVector<int> occ(static_cast<size_t>(sim.force_grid_size) * static_cast<size_t>(sim.force_grid_size));
+    HostVector<int> occ(static_cast<size_t>(sim.force_grid_size_x) * static_cast<size_t>(sim.force_grid_size_y));
     occ.copy_from_device(sim.device_occupancy_grid);
-    EXPECT_EQ(occ[8 * static_cast<size_t>(sim.force_grid_size) + 8], 1);
+    EXPECT_EQ(occ[8 * static_cast<size_t>(sim.force_grid_size_y) + 8], 1);
 }
 
 TEST(ParticleDynamicsTest, RepeatedRunsAreDeterministic) {

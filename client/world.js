@@ -54,8 +54,19 @@ class Shader {
         }
         this.gl.useProgram(this.program);
     }
+
+    setUniform2f(name, x, y) {
+        this.use();
+        const loc = this.gl.getUniformLocation(this.program, name);
+        this.gl.uniform2f(loc, x, y);
+    }
 }
 
+// uDomainMin/uDomainScale map the simulation domain [xMin,xMax]x[yMin,yMax]
+// (raw world coordinates, as sent by the server -- not pre-normalized) onto
+// clip space [-1,1]x[-1,1]: clip = (world - domainMin) * domainScale - 1.
+// Set once per Graphics instance (see Graphics constructor) from the domain
+// bounds the server sends at "initialize".
 const particleVertexSource = `#version 300 es
 
     precision highp float;
@@ -63,11 +74,15 @@ const particleVertexSource = `#version 300 es
     layout (location = 0) in vec3 aPos;
     layout (location = 1) in vec3 aColor;
 
+    uniform vec2 uDomainMin;
+    uniform vec2 uDomainScale;
+
     out vec3 ourColor;
 
     void main()
     {
-        gl_Position = vec4(aPos, 1.0f);
+        vec2 clipXY = (aPos.xy - uDomainMin) * uDomainScale - vec2(1.0f, 1.0f);
+        gl_Position = vec4(clipXY, aPos.z, 1.0f);
         ourColor = aColor;
     }
 `;
@@ -100,16 +115,22 @@ const arrowFragmentSource = `#version 300 es
 `;
 
 // Grid lines are a fixed red, so unlike the particle shader, no per-vertex
-// color attribute is needed.
+// color attribute is needed. Shares the same domain-to-clip transform as
+// particleVertexSource above (also used by the force-field arrow shader,
+// which reuses this vertex shader with a different fragment shader).
 const gridVertexSource = `#version 300 es
 
     precision highp float;
 
     layout (location = 0) in vec3 aPos;
 
+    uniform vec2 uDomainMin;
+    uniform vec2 uDomainScale;
+
     void main()
     {
-        gl_Position = vec4(aPos, 1.0f);
+        vec2 clipXY = (aPos.xy - uDomainMin) * uDomainScale - vec2(1.0f, 1.0f);
+        gl_Position = vec4(clipXY, aPos.z, 1.0f);
     }
 `;
 const gridFragmentSource = `#version 300 es
@@ -124,24 +145,51 @@ const gridFragmentSource = `#version 300 es
     }
 `;
 
-// Builds vertex positions for the gridSize x gridSize spatial grid's
-// cell-boundary lines, covering the [-1,1]x[-1,1] world domain that particle
-// positions already live in (no projection/camera transform anywhere in
-// this client, so these need no transform either). Static geometry -- built
-// once, not regenerated per frame like ParticleDrawer.draw().
-function buildGridLineVertices(gridSize) {
-    const vertices = new Float32Array(4 * (gridSize + 1) * 3);
+// Builds vertex positions for the collisionGridSizeX x collisionGridSizeY
+// collision grid's cell-boundary lines, covering the actual simulation
+// domain in raw world coordinates -- the vertex shader's
+// uDomainMin/uDomainScale uniforms (see gridVertexSource above) do the
+// world-to-clip mapping, so these no longer need to be pre-normalized to
+// [-1,1] themselves. Static geometry -- built once, not regenerated per
+// frame like ParticleDrawer.draw().
+function buildGridLineVertices(gridSizeX, gridSizeY, domain) {
+    const { xMin, xMax, yMin, yMax } = domain;
+    const vertices = new Float32Array((2 * (gridSizeX + 1) + 2 * (gridSizeY + 1)) * 3);
     let offset = 0;
-    for (let i = 0; i <= gridSize; ++i) {
-        const t = -1.0 + 2.0 * i / gridSize;
-        // Horizontal line at y = t, spanning x in [-1, 1]
-        vertices[offset++] = -1.0; vertices[offset++] = t; vertices[offset++] = 0.0;
-        vertices[offset++] = 1.0; vertices[offset++] = t; vertices[offset++] = 0.0;
-        // Vertical line at x = t, spanning y in [-1, 1]
-        vertices[offset++] = t; vertices[offset++] = -1.0; vertices[offset++] = 0.0;
-        vertices[offset++] = t; vertices[offset++] = 1.0; vertices[offset++] = 0.0;
+    // Vertical lines: one per x-tick, spanning y in [yMin, yMax]
+    for (let i = 0; i <= gridSizeX; ++i) {
+        const tx = xMin + (xMax - xMin) * i / gridSizeX;
+        vertices[offset++] = tx; vertices[offset++] = yMin; vertices[offset++] = 0.0;
+        vertices[offset++] = tx; vertices[offset++] = yMax; vertices[offset++] = 0.0;
+    }
+    // Horizontal lines: one per y-tick, spanning x in [xMin, xMax]
+    for (let j = 0; j <= gridSizeY; ++j) {
+        const ty = yMin + (yMax - yMin) * j / gridSizeY;
+        vertices[offset++] = xMin; vertices[offset++] = ty; vertices[offset++] = 0.0;
+        vertices[offset++] = xMax; vertices[offset++] = ty; vertices[offset++] = 0.0;
     }
     return vertices;
+}
+
+// Resizes the canvas to the largest rectangle that (a) fits within the
+// browser window and (b) matches the simulation domain's aspect ratio --
+// so particles render as circles no matter how rectangular the domain is
+// (equal world-space distances map to equal pixel distances in both axes),
+// and the view fills as much of the screen as possible.
+function fitCanvasToDomain(canvas, domain) {
+    const domainAspect = (domain.xMax - domain.xMin) / (domain.yMax - domain.yMin);
+
+    let width = window.innerWidth;
+    let height = width / domainAspect;
+    if (height > window.innerHeight) {
+        height = window.innerHeight;
+        width = height * domainAspect;
+    }
+
+    canvas.width = Math.max(1, Math.floor(width));
+    canvas.height = Math.max(1, Math.floor(height));
+    canvas.style.width = `${canvas.width}px`;
+    canvas.style.height = `${canvas.height}px`;
 }
 
 
@@ -206,13 +254,21 @@ class Graphics {
     forceShader;
     forceVerts;
     forceVertCount;
-    forceM;
+    forceM_x;
+    forceM_y;
     rlMaxForce;
     arrowMaxLen;
+    domain;
+    canvas;
 
-    constructor(drawer, gridSize, forceGridSize, rlMaxForce) {
+    constructor(drawer, collisionGridSizeX, collisionGridSizeY, forceGridSizeX, forceGridSizeY, rlMaxForce, domain) {
         this.drawer = drawer;
+        this.domain = domain;
         const canvas = document.querySelector("#gl-canvas");
+        this.canvas = canvas;
+        // Size the canvas to the domain's aspect ratio before creating the
+        // GL context, so the initial drawing buffer is already correct.
+        fitCanvasToDomain(canvas, domain);
         // Initialize the GL context
         const gl = canvas.getContext("webgl2");
         this.gl = gl;
@@ -223,11 +279,23 @@ class Graphics {
             );
             return;
         }
+        gl.viewport(0, 0, canvas.width, canvas.height);
 
         // Create shaders
         this.shader = new Shader(gl, particleVertexSource, particleFragmentSource);
         this.gridShader = new Shader(gl, gridVertexSource, gridFragmentSource);
         this.forceShader = new Shader(gl, gridVertexSource, arrowFragmentSource);
+
+        // World-to-clip transform (see particleVertexSource/gridVertexSource
+        // above): independent x/y scale factors, but since the canvas was
+        // just sized to match the domain's aspect ratio, equal world-space
+        // distances still map to equal pixel distances in both directions.
+        const domainScaleX = 2.0 / (domain.xMax - domain.xMin);
+        const domainScaleY = 2.0 / (domain.yMax - domain.yMin);
+        for (const s of [this.shader, this.gridShader, this.forceShader]) {
+            s.setUniform2f('uDomainMin', domain.xMin, domain.yMin);
+            s.setUniform2f('uDomainScale', domainScaleX, domainScaleY);
+        }
 
         // Set clear color to black, fully opaque
         gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -260,7 +328,7 @@ class Graphics {
 
         // Grid lines: static geometry (built once here, not per frame), no
         // color attribute needed since the grid shader hardcodes red.
-        const gridVertices = buildGridLineVertices(gridSize);
+        const gridVertices = buildGridLineVertices(collisionGridSizeX, collisionGridSizeY, domain);
         this.gridVertexCount = gridVertices.length / 3;
         this.VAO_grid = gl.createVertexArray();
         this.VBO_grid = gl.createBuffer();
@@ -272,10 +340,16 @@ class Graphics {
 
         // Force-field arrows: dynamic geometry rebuilt each frame.
         // Each cell gets 3 line segments (shaft + 2 arrowhead barbs) = 6 vertices.
-        this.forceM = forceGridSize;
+        this.forceM_x = forceGridSizeX;
+        this.forceM_y = forceGridSizeY;
         this.rlMaxForce = rlMaxForce;
-        this.arrowMaxLen = (2.0 / forceGridSize) * 0.45;  // 45% of one cell width
-        this.forceVertCount = forceGridSize * forceGridSize * 6;
+        // 45% of one cell's (smaller) world-space dimension -- cells are
+        // rectangular, not square, when the domain itself is rectangular.
+        this.arrowMaxLen = Math.min(
+            (domain.xMax - domain.xMin) / forceGridSizeX,
+            (domain.yMax - domain.yMin) / forceGridSizeY,
+        ) * 0.45;
+        this.forceVertCount = forceGridSizeX * forceGridSizeY * 6;
         this.forceVerts = new Float32Array(this.forceVertCount * 3);  // xyz per vertex
         this.VAO_forces = gl.createVertexArray();
         this.VBO_forces = gl.createBuffer();
@@ -286,19 +360,33 @@ class Graphics {
         gl.enableVertexAttribArray(0);
     }
 
+    // Re-fits the canvas to the current window size (keeping the domain's
+    // aspect ratio) and updates the GL viewport to match. Called from a
+    // single window "resize" listener owned by Client (see Client's
+    // constructor), not one per Graphics instance, so repeated restarts
+    // don't accumulate listeners retaining stale Graphics/canvas state.
+    handleResize() {
+        fitCanvasToDomain(this.canvas, this.domain);
+        this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    }
+
     // Rebuild arrow geometry from the current force grid and upload to GPU.
-    // forceX and forceY are Float32Array views of length m*m (row-major: x*m+y).
+    // forceX and forceY are Float32Array views of length m_x*m_y (row-major: x*m_y+y).
     updateForces(forceX, forceY) {
-        const m = this.forceM;
+        const m_x = this.forceM_x;
+        const m_y = this.forceM_y;
         const maxForce = this.rlMaxForce;
         const arrowLen = this.arrowMaxLen;
+        const { xMin, xMax, yMin, yMax } = this.domain;
+        const cellW = (xMax - xMin) / m_x;
+        const cellH = (yMax - yMin) / m_y;
         let v = 0;
-        for (let i = 0; i < m; i++) {
-            for (let j = 0; j < m; j++) {
-                const cx = -1.0 + (i + 0.5) * 2.0 / m;
-                const cy = -1.0 + (j + 0.5) * 2.0 / m;
-                const fx = forceX[i * m + j];
-                const fy = forceY[i * m + j];
+        for (let i = 0; i < m_x; i++) {
+            for (let j = 0; j < m_y; j++) {
+                const cx = xMin + (i + 0.5) * cellW;
+                const cy = yMin + (j + 0.5) * cellH;
+                const fx = forceX[i * m_y + j];
+                const fy = forceY[i * m_y + j];
                 const mag = Math.sqrt(fx * fx + fy * fy);
 
                 if (mag < 1e-10) {
@@ -395,8 +483,10 @@ class Client {
     socket;
     state;
     n;
-    gridSize;
-    forceGridSize;
+    collisionGridSizeX;
+    collisionGridSizeY;
+    forceGridSizeX;
+    forceGridSizeY;
     rlMaxForce;
     domain;
     xy;
@@ -414,6 +504,12 @@ class Client {
         this.observeMode = observeMode;
         this.hud = document.getElementById('hud');
         this.lastFrameStart = null;
+
+        // One resize listener for the lifetime of the page, delegating to
+        // whichever Graphics instance is current -- avoids accumulating a
+        // new listener (and retaining the old Graphics/canvas) on every
+        // "Restart" click, since setup() reassigns this.graphics each time.
+        window.addEventListener('resize', () => this.graphics?.handleResize());
 
         // Connect to the websocket server
         console.log("Running in " + mode + " mode.");
@@ -448,16 +544,18 @@ class Client {
             console.log('Received n from server: ', this.n);
             ++this.state;
         } else if (this.state == 1) {
-            // Read spatial grid resolution (for drawing the grid overlay)
+            // Read collision grid resolution (for drawing the grid overlay)
             const dataView = new DataView(event.data);
-            this.gridSize = dataView.getInt32(0, true);
-            console.log('Received gridSize from server: ', this.gridSize);
+            this.collisionGridSizeX = dataView.getInt32(0, true);
+            this.collisionGridSizeY = dataView.getInt32(4, true);
+            console.log('Received collisionGridSize from server: ', this.collisionGridSizeX, this.collisionGridSizeY);
             ++this.state;
         } else if (this.state == 2) {
             // Read force grid size (for drawing RL force-field arrows)
             const dataView = new DataView(event.data);
-            this.forceGridSize = dataView.getInt32(0, true);
-            console.log('Received forceGridSize from server: ', this.forceGridSize);
+            this.forceGridSizeX = dataView.getInt32(0, true);
+            this.forceGridSizeY = dataView.getInt32(4, true);
+            console.log('Received forceGridSize from server: ', this.forceGridSizeX, this.forceGridSizeY);
             ++this.state;
         } else if (this.state == 3) {
             // Read RL max force (for normalizing arrow lengths)
@@ -531,7 +629,7 @@ class Client {
 
                 // Update force-field arrows if the server sent force data
                 const forceBase = base + 7;
-                const m2 = this.forceGridSize * this.forceGridSize;
+                const m2 = this.forceGridSizeX * this.forceGridSizeY;
                 if (floats.length >= forceBase + 2 * m2) {
                     this.graphics.updateForces(
                         floats.subarray(forceBase, forceBase + m2),
@@ -606,7 +704,8 @@ class Client {
         this.drawer = new ParticleDrawer(this.n, this.numTriangles, this.particleRadius);
         this.drawer.draw(this.xy)
         // Set up graphics
-        this.graphics = new Graphics(this.drawer, this.gridSize, this.forceGridSize, this.rlMaxForce);
+        this.graphics = new Graphics(this.drawer, this.collisionGridSizeX, this.collisionGridSizeY,
+                this.forceGridSizeX, this.forceGridSizeY, this.rlMaxForce, this.domain);
         console.log("Initialized graphics");
         this.graphics.render();
     }

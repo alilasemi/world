@@ -5,7 +5,7 @@
 
 class FindNeighborsKernel : public Kernel {
 public:
-    FindNeighborsKernel(const float* state_, int n_, int grid_size_,
+    FindNeighborsKernel(const float* state_, int n_, int grid_size_x_, int grid_size_y_,
             int particles_per_cell_, const DomainParams domain_,
             int threads_per_block_, int* neighbors_, bool timing_enabled_ = true);
     ~FindNeighborsKernel() override = default;
@@ -21,18 +21,21 @@ public:
 
 private:
     const float* state;
-    const int grid_size;
+    const int grid_size_x;
+    const int grid_size_y;
     const int particles_per_cell;
     const DomainParams domain;
     int* neighbors;
 
-    // Dense spatial grid: spatial_grid[cell_x*grid_size + cell_y] holds the
-    // compact occupied-cell index into particles_in_cell (or -1 if empty).
-    // particles_in_cell[occ_idx * k + slot] holds particle indices;
-    // num_per_cell[occ_idx] is the count for that occupied cell.
+    // Dense collision grid (used for neighbor lookup -- distinct from the
+    // force/occupancy grids elsewhere in ParticleDynamics, which are not
+    // used for collision detection): collision_grid[cell_x*grid_size_y +
+    // cell_y] holds the compact occupied-cell index into particles_in_cell
+    // (or -1 if empty). particles_in_cell[occ_idx * k + slot] holds particle
+    // indices; num_per_cell[occ_idx] is the count for that occupied cell.
     // num_occupied_cells is a single device int used as an atomic counter
     // to assign new occ_idx values in the compact pass.
-    DeviceVector<int> spatial_grid;          // m*m
+    DeviceVector<int> collision_grid;        // grid_size_x*grid_size_y
     DeviceVector<int> particles_in_cell;     // n*k
     DeviceVector<int> num_per_cell;          // n (max n occupied cells)
     DeviceVector<int> num_occupied_cells; // 1

@@ -26,10 +26,13 @@ public:
     float real_time_ratio;
     int n;
     float dt;
-    int grid_size;
+    int collision_grid_size_x;
+    int collision_grid_size_y;
     int particles_per_cell;
-    int force_grid_size;
-    int occupancy_grid_size;
+    int force_grid_size_x;
+    int force_grid_size_y;
+    int occupancy_grid_size_x;
+    int occupancy_grid_size_y;
 
     std::vector<float> xy;
 
@@ -51,19 +54,22 @@ public:
     DeviceVector<float> device_energy;
     HostVector<float> host_energy;
 
-    // Per-particle body force, interpolated every step from the m*m grid
-    // fields below and consumed by ComputeRHSKernel.
+    // Per-particle body force, interpolated every step from the
+    // force_grid_size_x*force_grid_size_y grid fields below and consumed by
+    // ComputeRHSKernel.
     DeviceVector<float> device_body_force_x;
     DeviceVector<float> device_body_force_y;
 
-    // m*m externally-supplied (e.g. AI-predicted) force field, one scalar per
-    // cell, row-major grid[cell_x * force_grid_size + cell_y]. Zeroed at
-    // construction; nothing else writes these until an external caller
-    // uploads a field via DeviceVector::copy_from_host.
+    // force_grid_size_x*force_grid_size_y externally-supplied (e.g.
+    // AI-predicted) force field, one scalar per cell, row-major
+    // grid[cell_x * force_grid_size_y + cell_y]. Zeroed at construction;
+    // nothing else writes these until an external caller uploads a field via
+    // DeviceVector::copy_from_host.
     DeviceVector<float> device_grid_force_x;
     DeviceVector<float> device_grid_force_y;
 
-    // m*m occupancy snapshot (0/1), same layout as above. Only refreshed when
+    // occupancy_grid_size_x*occupancy_grid_size_y occupancy snapshot (0/1),
+    // same row-major layout as above. Only refreshed when
     // update_occupancy_grid() is called -- not part of take_step().
     DeviceVector<int> device_occupancy_grid;
 
@@ -109,7 +115,7 @@ public:
     // ComputeRHSKernel pass (device_rhs[4i+2], [4i+3]).
     float compute_max_acceleration();
 
-    // Lifetime-cumulative count of spatial-grid overflow incidents (see
+    // Lifetime-cumulative count of collision-grid overflow incidents (see
     // FindNeighborsKernel::overflow_count()) -- a nonzero value means the
     // simulation has diverged badly enough to overflow particles_per_cell at
     // some point. Not checked automatically every step; poll occasionally.

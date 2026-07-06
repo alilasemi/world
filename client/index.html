@@ -5,9 +5,25 @@
         <title>World</title>
         <script src="world.js" type="module"></script>
         <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                background: black;
+            }
             input[type="checkbox"] {
                 width: 30px;
                 height: 30px;
+            }
+            /* Overlaid on top of the canvas (like #hud below) rather than
+               taking up layout space, so the canvas can be sized to the full
+               window -- see fitCanvasToDomain() in world.js. */
+            #controls {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                color: white;
+                font-family: sans-serif;
             }
             #hud {
                 position: absolute;
@@ -24,14 +40,15 @@
         </style>
     </head>
 
-    <input type="checkbox" id="restartButton" name="b1" value="Bike">
-    <label for="b1"> Restart </label>
-    <input type="checkbox" id="gridButton" name="b2">
-    <label for="b2"> Grid </label>
-    <input type="checkbox" id="forceFieldButton" name="b3">
-    <label for="b3"> Force field </label>
-
     <body>
+        <div id="controls">
+            <input type="checkbox" id="restartButton" name="b1" value="Bike">
+            <label for="b1"> Restart </label>
+            <input type="checkbox" id="gridButton" name="b2">
+            <label for="b2"> Grid </label>
+            <input type="checkbox" id="forceFieldButton" name="b3">
+            <label for="b3"> Force field </label>
+        </div>
         <canvas id="gl-canvas" width="900" height="900"></canvas>
         <div id="hud"></div>
     </body>

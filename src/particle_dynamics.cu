@@ -11,10 +11,13 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     cudaEventCreate(&stop_event);
 
     // Pull the scalar grid/timestep settings out of the config.
-    grid_size = config.grid_size;
+    collision_grid_size_x = config.collision_grid_size_x;
+    collision_grid_size_y = config.collision_grid_size_y;
     particles_per_cell = config.particles_per_cell;
-    force_grid_size = config.force_grid_size;
-    occupancy_grid_size = config.occupancy_grid_size;
+    force_grid_size_x = config.force_grid_size_x;
+    force_grid_size_y = config.force_grid_size_y;
+    occupancy_grid_size_x = config.occupancy_grid_size_x;
+    occupancy_grid_size_y = config.occupancy_grid_size_y;
     dt = config.dt;
 
     // Initialize on host according to the configured initialization type.
@@ -30,8 +33,8 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     device_material.copy_from_host(host_material);
     unpack_state();
 
-    // 9 = 3x3 stencil cell count; FindNeighborsKernel owns the dense spatial
-    // grid privately and writes results as a flat n*9*k neighbor array.
+    // 9 = 3x3 stencil cell count; FindNeighborsKernel owns the dense
+    // collision grid privately and writes results as a flat n*9*k neighbor array.
     device_neighbors = DeviceVector<int>(static_cast<size_t>(n) * 9 * static_cast<size_t>(particles_per_cell));
 
     time = 0.0f;
@@ -48,28 +51,28 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     }
     device_mass.copy_from_host(host_mass);
 
-    // m*m grid of externally-supplied (e.g. AI) body forces, plus the
-    // occupancy snapshot fed back to that external model. Independent of the
-    // collision grid above.
+    // force_grid_size_x*force_grid_size_y grid of externally-supplied (e.g.
+    // AI) body forces, plus the occupancy snapshot fed back to that external
+    // model. Independent of the collision grid above.
     device_state_n = DeviceVector<float>(4 * n);
     device_body_force_x = DeviceVector<float>(n);
     device_body_force_y = DeviceVector<float>(n);
-    device_grid_force_x = DeviceVector<float>(force_grid_size * force_grid_size);
-    device_grid_force_y = DeviceVector<float>(force_grid_size * force_grid_size);
+    device_grid_force_x = DeviceVector<float>(force_grid_size_x * force_grid_size_y);
+    device_grid_force_y = DeviceVector<float>(force_grid_size_x * force_grid_size_y);
     // Nothing else initializes these, and InterpolateForceKernel reads them
     // every step starting from the very first take_step() call -- zero is
     // also the correct "no AI model configured yet" default.
     CUDA_CHECK(cudaMemset(device_grid_force_x.data(), 0,
-            static_cast<size_t>(force_grid_size) * static_cast<size_t>(force_grid_size) * sizeof(float)));
+            static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
     CUDA_CHECK(cudaMemset(device_grid_force_y.data(), 0,
-            static_cast<size_t>(force_grid_size) * static_cast<size_t>(force_grid_size) * sizeof(float)));
-    device_occupancy_grid = DeviceVector<int>(occupancy_grid_size * occupancy_grid_size);
+            static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
+    device_occupancy_grid = DeviceVector<int>(occupancy_grid_size_x * occupancy_grid_size_y);
 
     // Create CUDA kernels
     const bool kt = config.kernel_timing;
     find_neighbors_kernel = std::make_unique<FindNeighborsKernel>(
-            device_state.data(), n, grid_size, particles_per_cell, config.domain,
-            config.threads_per_block, device_neighbors.data(), kt);
+            device_state.data(), n, collision_grid_size_x, collision_grid_size_y, particles_per_cell,
+            config.domain, config.threads_per_block, device_neighbors.data(), kt);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_neighbors.data(),
             device_body_force_x.data(), device_body_force_y.data(),
@@ -85,10 +88,11 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
             device_mass.data(), n, config.physics, config.threads_per_block, device_energy.data(), kt);
 
     interpolate_force_kernel = std::make_unique<InterpolateForceKernel>(device_state.data(),
-            device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size, config.domain,
-            config.threads_per_block, device_body_force_x.data(), device_body_force_y.data(), kt);
+            device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size_x, force_grid_size_y,
+            config.domain, config.threads_per_block, device_body_force_x.data(), device_body_force_y.data(), kt);
     occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
-            device_state.data(), n, occupancy_grid_size, config.domain, config.threads_per_block, kt);
+            device_state.data(), n, occupancy_grid_size_x, occupancy_grid_size_y, config.domain,
+            config.threads_per_block, kt);
 }
 
 
@@ -165,19 +169,21 @@ void ParticleDynamics::initialize_to_single_particle(const float x0, const float
 
 
 void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
-    const float length = config.cube_length;
+    const float length_x = config.cube_length_x;
+    const float length_y = config.cube_length_y;
     // Spacing uses the same radius as the collision physics so the initial
     // packing matches the contact model (deduped from compute_rhs_kernel).
     const float radius = config.physics.particle_radius;
-    int num_per_side = static_cast<int>(length / (2 * radius));
-    resize(num_per_side * num_per_side + 1);
+    int num_per_side_x = static_cast<int>(length_x / (2 * radius));
+    int num_per_side_y = static_cast<int>(length_y / (2 * radius));
+    resize(num_per_side_x * num_per_side_y + 1);
 
-    for (size_t i = 0; i < num_per_side; ++i) {
-        for (size_t j = 0; j < num_per_side; ++j) {
-            host_state[4 * (i * num_per_side + j) + 0] = x0 + i * 2 * 1.01*radius;
-            host_state[4 * (i * num_per_side + j) + 1] = y0 + j * 2 * 1.01*radius;
-            host_state[4 * (i * num_per_side + j) + 2] = 0.0f;
-            host_state[4 * (i * num_per_side + j) + 3] = 0.0f;
+    for (size_t i = 0; i < num_per_side_x; ++i) {
+        for (size_t j = 0; j < num_per_side_y; ++j) {
+            host_state[4 * (i * num_per_side_y + j) + 0] = x0 + i * 2 * 1.01*radius;
+            host_state[4 * (i * num_per_side_y + j) + 1] = y0 + j * 2 * 1.01*radius;
+            host_state[4 * (i * num_per_side_y + j) + 2] = 0.0f;
+            host_state[4 * (i * num_per_side_y + j) + 3] = 0.0f;
         }
     }
 
