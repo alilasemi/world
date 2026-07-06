@@ -9,3 +9,6 @@ package-lock.json
 stability_results.dat
 stability_plot.gp
 stability_plot.png
+history.dat
+trajectory_plot.gp
+trajectory_plot.png

@@ -1,0 +1,35 @@
+# Model problem: a single particle released 3 radii above the floor with no
+# gravity, given an initial downward velocity of 10, so the only thing
+# happening is the very first floor collision (approach, penalty-force
+# rebound, departure) -- no gravity to complicate the picture afterward.
+# sim_time is a guess-and-check value: long enough to show the approach and
+# the full rebound, short enough not to run on uninterestingly far past it.
+
+simulation:
+  dt: 0.0001
+
+physics:
+  gravity: 0.0
+  particle_radius: 0.01
+  # floor_y defaults to -1.0 (see domain/physics defaults in sim_config.h).
+
+initialization:
+  type: single_particle
+  x0: 0.0
+  y0: -0.97   # floor_y + 3*radius = -1.0 + 3*0.01
+  vx0: 0.0
+  vy0: -10.0  # moving straight down toward the floor
+
+model_problem:
+  sim_time: 0.03
+
+# dt x max_force x restitution sweep -- how do timestep resolution, contact
+# stiffness, and bounciness change the shape of this one collision? dt/
+# max_force are the same "sweep:" section stability_and_accuracy reads;
+# restitution is model_problem-only. Omit any list (or leave it empty) to
+# fall back to the single simulation.dt / physics.max_force /
+# physics.restitution above.
+sweep:
+  dt: [0.001]
+  max_force: [200.0]
+  restitution: [0.1, 0.3, 0.6, 0.9]

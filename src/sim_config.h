@@ -25,6 +25,12 @@ struct PhysicsParams {
     float ceiling_y;
     float left_wall_x;
     float right_wall_x;
+    // Target coefficient of restitution (0 = fully inelastic/critically
+    // damped, 1 = perfectly elastic/no damping) for the linear
+    // spring-dashpot contact model in ComputeRHSKernel. See
+    // restitution_to_damping() in compute_rhs_kernel.cu for how this maps
+    // to an actual dashpot coefficient.
+    float restitution;
 };
 
 // Full host-side configuration. Every member defaults to the value that was
@@ -44,15 +50,17 @@ struct SimConfig {
     DomainParams domain{-1.0f, 1.0f, -1.0f, 1.0f};
 
     // Physics
-    PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, 1.0f, -1.0f, 1.0f};
+    PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, 1.0f, -1.0f, 1.0f, 0.3f};
 
     // Per-material masses, indexed by material id (0 = wall, 1 = snow, 2 = sled).
     std::vector<float> masses{0.0f, 0.04f, 0.04f};
 
     // Initialization
-    std::string init_type = "cube";  // "cube" | "two_particles"
+    std::string init_type = "cube";  // "cube" | "two_particles" | "single_particle"
     float init_x0 = -0.5f;
     float init_y0 = 0.0f;
+    float init_vx0 = 0.0f;  // single_particle only; cube/two_particles always start at rest
+    float init_vy0 = 0.0f;
     float cube_length = 1.0f;  // particle spacing is derived from physics.particle_radius
     float sled_x = -0.9f;
     float sled_y = 0.9f;
@@ -74,13 +82,27 @@ struct SimConfig {
     int profiling_steps_per_iter = 10;
     bool kernel_timing = true;
 
+    // Shared dt x max_force sweep axes (YAML "sweep:" section), consumed by
+    // both stability_and_accuracy and model_problem. Empty means "just use
+    // the single simulation.dt / physics.max_force value" -- both drivers
+    // treat that as a degenerate 1x1 sweep, so an unswept config behaves
+    // exactly like a single run.
+    std::vector<float> sweep_dt{};
+    std::vector<float> sweep_max_force{};
+    // Third sweep axis (same "sweep:" section, key "restitution"), currently
+    // only consumed by model_problem (not stability_and_accuracy). Empty
+    // means "just use the single physics.restitution value", same
+    // degenerate-1-value convention as the two axes above.
+    std::vector<float> sweep_restitution{};
+
     // Stability & accuracy driver (build/bin/stability_and_accuracy)
     std::string stability_mode = "fixed_time";  // "fixed_time" | "steady_state"
     float stability_sim_time = 0.1f;            // max simulated time per run (cap in both modes)
-    std::vector<float> stability_dt_sweep{0.1f, 0.05f, 0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
-    std::vector<float> stability_max_force_sweep{100.0f};  // 2nd sweep axis; 1 value = old 1D behavior
     float stability_acceleration_cutoff = 0.01f;  // steady when max|accel| < cutoff * gravity
     int stability_steps_per_steadiness_check = 100;  // how often (in steps) to test steadiness
+
+    // Model problem driver (build/bin/model_problem)
+    float model_problem_sim_time = 1.0f;  // seconds of simulated time to record and plot
 
     // Time integration
     std::string time_integrator = "semi_implicit_euler";  // "semi_implicit_euler" | "backward_euler_picard"

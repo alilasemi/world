@@ -20,6 +20,8 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     // Initialize on host according to the configured initialization type.
     if (config.init_type == "two_particles") {
         initialize_to_two_particles(config.init_x0, config.init_y0);
+    } else if (config.init_type == "single_particle") {
+        initialize_to_single_particle(config.init_x0, config.init_y0);
     } else {
         initialize_to_cube(config.init_x0, config.init_y0);
     }
@@ -143,6 +145,22 @@ void ParticleDynamics::initialize_to_two_particles(const float x0, const float y
 
     printf("Initialized second particle at (%.2f, %.2f).\n", host_state[4],
             host_state[5]);
+}
+
+
+void ParticleDynamics::initialize_to_single_particle(const float x0, const float y0) {
+    const float vx0 = config.init_vx0;
+    const float vy0 = config.init_vy0;
+    printf("Initializing to a single particle at (%.2f, %.2f) with velocity (%.2f, %.2f)...\n",
+            x0, y0, vx0, vy0);
+    resize(1);
+
+    host_state[0] = x0;
+    host_state[1] = y0;
+    host_state[2] = vx0;
+    host_state[3] = vy0;
+
+    host_material[0] = config.particle_material;
 }
 
 

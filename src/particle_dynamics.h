@@ -95,6 +95,8 @@ public:
 
     void initialize_to_cube(const float x0, const float y0);
 
+    void initialize_to_single_particle(const float x0, const float y0);
+
     void take_step();
 
     float compute_total_energy();

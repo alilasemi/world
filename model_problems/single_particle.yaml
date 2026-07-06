@@ -1,0 +1,24 @@
+# Model problem: a single particle released from rest at the center of the
+# domain, falling under gravity. Sanity-checks free-fall + floor-collision
+# physics via build/bin/model_problem's full-history trajectory plot
+# (model_problems/trajectory_plot.png: time vs. y position).
+#
+# Unlike config.yaml / stability/config.yaml, this is deliberately NOT a full
+# copy of every SimConfig default -- model_problems/ configs are meant to be
+# small and focused on the one thing being tested. Any key omitted here just
+# falls back to the built-in default.
+
+simulation:
+  dt: 0.0001
+
+physics:
+  gravity: 9.81
+  particle_radius: 0.01
+
+initialization:
+  type: single_particle
+  x0: 0.0   # domain center for the default [-1,1] x [-1,1] domain
+  y0: 0.0
+
+model_problem:
+  sim_time: 1.0   # seconds of simulated time to record and plot

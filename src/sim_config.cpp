@@ -79,6 +79,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "ceiling_y") cfg.physics.ceiling_y = f();
         else if (key == "left_wall_x") cfg.physics.left_wall_x = f();
         else if (key == "right_wall_x") cfg.physics.right_wall_x = f();
+        else if (key == "restitution") cfg.physics.restitution = f();
         else warn_unknown(section, key);
     } else if (section == "materials") {
         if (key == "masses") cfg.masses = parse_float_list(value);
@@ -87,6 +88,8 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         if (key == "type") cfg.init_type = unquote(value);
         else if (key == "x0") cfg.init_x0 = f();
         else if (key == "y0") cfg.init_y0 = f();
+        else if (key == "vx0") cfg.init_vx0 = f();
+        else if (key == "vy0") cfg.init_vy0 = f();
         else if (key == "cube_length") cfg.cube_length = f();
         else if (key == "sled_x") cfg.sled_x = f();
         else if (key == "sled_y") cfg.sled_y = f();
@@ -106,13 +109,19 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "profiling_steps_per_iter") cfg.profiling_steps_per_iter = i();
         else if (key == "kernel_timing") cfg.kernel_timing = b();
         else warn_unknown(section, key);
+    } else if (section == "sweep") {
+        if (key == "dt") cfg.sweep_dt = parse_float_list(value);
+        else if (key == "max_force") cfg.sweep_max_force = parse_float_list(value);
+        else if (key == "restitution") cfg.sweep_restitution = parse_float_list(value);
+        else warn_unknown(section, key);
     } else if (section == "stability") {
         if (key == "mode") cfg.stability_mode = unquote(value);
         else if (key == "sim_time") cfg.stability_sim_time = f();
-        else if (key == "dt_sweep") cfg.stability_dt_sweep = parse_float_list(value);
-        else if (key == "max_force_sweep") cfg.stability_max_force_sweep = parse_float_list(value);
         else if (key == "acceleration_cutoff") cfg.stability_acceleration_cutoff = f();
         else if (key == "steps_per_steadiness_check") cfg.stability_steps_per_steadiness_check = i();
+        else warn_unknown(section, key);
+    } else if (section == "model_problem") {
+        if (key == "sim_time") cfg.model_problem_sim_time = f();
         else warn_unknown(section, key);
     } else if (section == "time_integration") {
         if (key == "solver") cfg.time_integrator = value;

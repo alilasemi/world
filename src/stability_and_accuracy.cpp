@@ -326,8 +326,13 @@ int main(int argc, char** argv) {
     const std::string config_path = (argc > 1) ? argv[1] : "stability/config.yaml";
     const SimConfig config = load_config(config_path);
     const std::string self_path = resolve_self_path(argv[0]);
-    const std::vector<float> dts = config.stability_dt_sweep;
-    const std::vector<float> max_forces = config.stability_max_force_sweep;
+    // An empty sweep_dt/sweep_max_force (no "sweep:" section in the config)
+    // degenerates to a 1x1 sweep at the config's own simulation.dt /
+    // physics.max_force.
+    const std::vector<float> dts = config.sweep_dt.empty()
+            ? std::vector<float>{config.dt} : config.sweep_dt;
+    const std::vector<float> max_forces = config.sweep_max_force.empty()
+            ? std::vector<float>{config.physics.max_force} : config.sweep_max_force;
 
     print_table_header(max_forces);
 

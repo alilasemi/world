@@ -32,6 +32,11 @@ physics:
   ceiling_y: 1.0
   left_wall_x: -1.0
   right_wall_x: 1.0
+  # Target coefficient of restitution for the linear spring-dashpot contact
+  # model (0 = fully inelastic/critically damped, 1 = perfectly elastic/no
+  # damping). See the restitution_to_damping() comment in
+  # compute_rhs_kernel.cu for the derivation and literature references.
+  restitution: 0.3
 
 materials:
   # Per-material masses, indexed by material id: 0 = wall, 1 = snow, 2 = sled.
@@ -65,18 +70,21 @@ drivers:
   profiling_steps_per_iter: 10
   kernel_timing: true
 
-# Sweep parameters for build/bin/stability_and_accuracy. This config runs the
-# steady-state x max_force stiffness exploration: for every (dt, max_force)
-# cell, keep stepping (up to sim_time) until the max particle acceleration
-# drops below acceleration_cutoff * gravity, checking every
-# steps_per_steadiness_check steps. Produces stability_results.dat and a
-# stability_plot.png (red = went unstable, green = reached steady state,
+# dt x max_force sweep axes, shared with build/bin/model_problem.
+sweep:
+  dt: [0.001, 0.0005, 0.0001, .00005, 0.00001]
+  max_force: [1, 3, 10.0, 30.0, 100.0]
+
+# Remaining sweep parameters for build/bin/stability_and_accuracy. This
+# config runs the steady-state x max_force stiffness exploration: for every
+# (dt, max_force) cell, keep stepping (up to sim_time) until the max
+# particle acceleration drops below acceleration_cutoff * gravity, checking
+# every steps_per_steadiness_check steps. Produces stability_results.dat and
+# a stability_plot.png (red = went unstable, green = reached steady state,
 # yellow = ran to sim_time without either).
 stability:
   mode: steady_state
   sim_time: 5.
-  dt_sweep: [0.001, 0.0005, 0.0001, .00005, 0.00001]
-  max_force_sweep: [1, 3, 10.0, 30.0, 100.0]
   acceleration_cutoff: 0.01
   steps_per_steadiness_check: 10
 

@@ -36,6 +36,7 @@ exe = world
 test_exe = test
 exe_profile = profile
 exe_stability = stability_and_accuracy
+exe_model_problem = model_problem
 # Directories
 src_dir = src
 build_dir = build
@@ -68,6 +69,7 @@ test_obj = $(test_src:$(test_dir)/%.cpp=$(test_obj_dir)/%.o)
 profile_obj = $(obj_dir)/profiling_sim.o
 main_obj = $(obj_dir)/broadcast.o
 stability_obj = $(obj_dir)/stability_and_accuracy.o
+model_problem_obj = $(obj_dir)/model_problem.o
 
 # -- External dependencies (auto-built if missing) -- #
 glfw_lib = external/glfw/build/lib/libglfw3.a
@@ -117,6 +119,9 @@ profile: deps directories $(bin_dir)/$(exe_profile)
 .PHONY: stability
 stability: deps directories $(bin_dir)/$(exe_stability)
 
+.PHONY: model_problem
+model_problem: deps directories $(bin_dir)/$(exe_model_problem)
+
 .PHONY: test
 test: deps directories $(bin_dir)/$(test_exe)
 	./$(bin_dir)/$(test_exe)
@@ -162,6 +167,9 @@ $(bin_dir)/$(exe_profile): $(profile_obj) $(obj)
 	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(exe_stability): $(stability_obj) $(obj)
+	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+
+$(bin_dir)/$(exe_model_problem): $(model_problem_obj) $(obj)
 	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(test_exe): $(test_obj) $(obj)
