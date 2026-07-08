@@ -1,0 +1,269 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{mathtools}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+\title{Reinforcement Learning from Scratch:\\
+Policy Gradients, REINFORCE, Actor-Critic, and PPO\\
+\large A primer for \texttt{rl\_train.py}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{The setup: what problem RL is even solving}
+
+Everything below assumes an \textbf{MDP (Markov Decision Process)} --- the standard
+mathematical model for sequential decision-making.
+
+\paragraph{Agent and environment.} There's an \emph{agent} (the thing being trained ---
+here, the policy network) and an \emph{environment} (the CUDA particle sim). They interact
+in discrete time steps $t = 0, 1, 2, \dots$
+
+\begin{itemize}
+  \item $S_t$ --- the \textbf{state} at time $t$: whatever information the agent observes
+  about the environment. In this codebase, $S_t$ is the occupancy grid.
+  \item $A_t$ --- the \textbf{action} the agent takes at time $t$, chosen after observing
+  $S_t$. Here, $A_t$ is the force-grid field.
+  \item $R_{t+1}$ --- the \textbf{reward}: a scalar the environment returns after the agent
+  takes action $A_t$ in state $S_t$, indicating how good that was. Note the indexing
+  convention: $R_{t+1}$ is the consequence of $(S_t, A_t)$, not $R_t$ --- the reward arrives
+  one tick after the state/action that caused it. Here,
+  $R_{t+1} = -\bar d - 0.1\,\sigma_d$ (the distance-to-center penalty).
+  \item The environment then produces $S_{t+1}$, and the cycle repeats.
+\end{itemize}
+
+This handoff --- $S_t, A_t \to R_{t+1}, S_{t+1}$ --- is a \textbf{transition}. A full run
+from start to termination, $S_0, A_0, R_1, S_1, A_1, R_2, \dots$, is an \textbf{episode} or
+\textbf{trajectory}, often written $\tau$.
+
+\textbf{``Markov''} means $S_{t+1}$ and $R_{t+1}$ depend only on $(S_t, A_t)$, not on
+anything earlier. This is a modeling assumption, not automatically true: an occupancy-only
+observation (no velocity) technically violates it, since two states with identical
+positions but different velocities look identical to the agent but evolve differently.
+
+The \textbf{dynamics} are written
+$$p(s', r \mid s, a) \doteq \Pr\{S_{t+1}=s', R_{t+1}=r \mid S_t=s, A_t=a\},$$
+the probability of landing in state $s'$ with reward $r$, given the agent was in state $s$
+and took action $a$. This belongs to the environment; the agent never sees it directly ---
+in this case it's the CUDA kernels, and the agent only observes samples of the outcome.
+
+\section*{The policy}
+
+$\pi(a \mid s)$ --- the \textbf{policy}: a conditional probability distribution over
+actions given a state, $\pi(a|s) = \Pr\{A_t = a \mid S_t = s\}$. This is the object being
+learned. When implemented by a parameterized function (a neural net) with parameter vector
+$\theta$, write $\pi(a|s,\theta)$ to make the dependence on the learnable parameters
+explicit --- $\theta$ is just ``all the weights,'' stacked into one vector. In the code,
+$\theta$ is every weight in \texttt{ActorCritic}'s conv layers plus \texttt{log\_std}.
+
+A policy can be \textbf{deterministic} (one action per state, probability 1) or
+\textbf{stochastic} (a real distribution). Differentiating through a distribution's
+\emph{parameters} (mean/std of a Gaussian, or softmax logits) is what makes gradient-based
+learning of $\pi$ possible at all; a hard deterministic policy $a=f(s)$ has no
+``probability of the action taken'' to differentiate. (Deterministic policy gradients
+exist too --- Silver et al.\ 2014 --- but need a different trick, differentiating through
+a learned $Q$ function instead; not covered here.)
+
+\section*{Return: ``good'' over time, not just at one step}
+
+A single reward $R_{t+1}$ only tells you about one step. Define the \textbf{return}:
+$$G_t \doteq R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + \cdots = \sum_{k=0}^\infty \gamma^k R_{t+k+1}.$$
+$\gamma \in [0,1]$ is the \textbf{discount factor} --- how much a reward $k$ steps in the
+future is worth relative to right now. $\gamma$ near 1: farsighted. $\gamma=0$: only the
+immediate reward matters. It guarantees $G_t$ is finite even for long/continuing tasks,
+and is often a genuinely correct model of preference. In \texttt{rl\_train.py},
+\texttt{gamma=0.99} in \texttt{compute\_gae}.
+
+$G_t$ is a \textbf{random variable} --- it depends on the random future trajectory --- so
+any statement about it is really a statement about its expectation or distribution.
+
+\section*{Value functions}
+
+\begin{align*}
+v_\pi(s) &\doteq \mathbb E_\pi[G_t \mid S_t = s] &&\text{\textbf{state-value function}: expected return from state $s$ under $\pi$}\\
+q_\pi(s,a) &\doteq \mathbb E_\pi[G_t \mid S_t = s, A_t = a] &&\text{\textbf{action-value function} (``Q-function''): expected return, taking}\\
+&&&\text{action $a$ in $s$ \emph{right now}, then following $\pi$ afterward}
+\end{align*}
+$\mathbb E_\pi[\cdot]$ means expectation where actions are drawn from $\pi$ and states
+evolve under the environment's real dynamics.
+
+Both are unknown functions --- defined in terms of the future, which hasn't happened yet.
+Estimating them is the core of \emph{action-value methods}: learn $\hat q(s,a)$, then act
+by $\arg\max_a \hat q(s,a)$, so the policy is \emph{derived from} the value function.
+Policy-gradient methods break from this: they parameterize and learn $\pi$ directly, using
+a value function only as a helper signal (the ``critic''), never as what action-selection
+reads from.
+
+$\hat v(s,w)$, $\hat q(s,a,w)$ --- a \textbf{learned approximation} to $v_\pi$ or $q_\pi$,
+with its own parameter vector $w$ (distinct from the policy's $\theta$) --- e.g.\ the critic
+head of \texttt{ActorCritic}.
+
+\section*{The learning objective and gradient ascent}
+
+$$J(\theta) \doteq v_{\pi_\theta}(s_0)$$
+the \textbf{performance measure}: for the episodic case, the value of a fixed start state
+$s_0$ under the policy that $\theta$ induces. This is the number being maximized by
+choosing $\theta$. (A continuing-task version, $J(\theta) = r(\pi)$, the average reward
+rate, also exists --- relevant if the task never terminates. Episodes here terminate on
+domain-exit, so the episodic version applies, modulo the finite-horizon truncation from
+\texttt{episode\_steps}.)
+
+\textbf{Gradient ascent}: repeatedly nudge $\theta$ in the direction that increases $J$
+fastest:
+$$\theta_{t+1} = \theta_t + \alpha \nabla J(\theta_t).$$
+$\alpha$ is the \textbf{step size} (learning rate). $\nabla J(\theta)$ is the
+\textbf{gradient} of $J$ w.r.t.\ $\theta$ --- a vector of partial derivatives,
+$\nabla J(\theta) = \big[\partial J/\partial\theta_1,\ \partial J/\partial\theta_2,\dots\big]^\top$,
+pointing toward steepest increase.
+
+\textbf{Problem}: $\nabla J(\theta)$ can't be computed exactly --- that would require
+knowing the environment's dynamics $p(s',r|s,a)$ and summing over every possible
+trajectory. You only get to \emph{sample} trajectories by running the policy. So instead
+compute $\widehat{\nabla J(\theta_t)}$, a \textbf{stochastic estimate} --- something
+calculable from one sampled trajectory, whose expected value equals (or is proportional
+to) the true gradient:
+$$\mathbb E\big[\widehat{\nabla J(\theta_t)}\big] \propto \nabla J(\theta_t).$$
+This is \textbf{stochastic gradient ascent} --- same idea as SGD in supervised learning,
+applied to a much less well-behaved objective: there's no labeled data, the agent
+generates its own data by acting, and that data's distribution depends on the very
+parameters being updated. Everything that follows is: \emph{what is a valid, computable}
+$\widehat{\nabla J(\theta_t)}$?
+
+\section*{The Policy Gradient Theorem, symbol by symbol}
+
+$$\nabla J(\theta) \propto \sum_s \mu(s) \sum_a q_\pi(s,a)\,\nabla \pi(a|s,\theta)$$
+
+\begin{itemize}
+  \item $\sum_s(\cdot)$, $\sum_a(\cdot)$ --- sums over every possible state / action (for
+  continuous spaces these become integrals; the continuous-action Gaussian policy below is
+  the relevant generalization).
+  \item $\mu(s)$ --- the \textbf{on-policy state distribution}: roughly, the fraction of
+  time steps the agent spends in state $s$ if it runs $\pi$ for a long time. It's an
+  emergent property of $\pi$ and the environment, not something chosen directly.
+  \item $q_\pi(s,a)$ --- as above.
+  \item $\nabla\pi(a|s,\theta)$ --- gradient of the policy's own output probability w.r.t.\
+  $\theta$. This \emph{is} directly computable once a parameterization is chosen (plain
+  calculus on the network/softmax/Gaussian formula), unlike $\nabla J$ itself.
+  \item $\propto$ --- ``proportional to'': the two sides differ by a $\theta$-independent
+  constant (for episodic tasks, the average episode length), so it doesn't matter for
+  gradient \emph{ascent} --- any constant can be absorbed into $\alpha$.
+\end{itemize}
+
+\textbf{Why this theorem is the crux of the chapter}: naively, $J(\theta)$ depends on
+$\theta$ through two channels --- (1) $\theta$ changes which actions get taken in a given
+state (easy: that's just $\nabla\pi$), and (2) $\theta$ changes \emph{which states the
+agent tends to visit at all}, and that channel's dependence on $\theta$ runs through the
+environment's unknown dynamics. The theorem's content is that the formula for
+$\nabla J(\theta)$ contains \textbf{no derivative of $\mu$} --- channel (2)'s messiness
+cancels out algebraically (via an infinite-unrolling argument). That's what makes the
+gradient computable from experience alone, without a model of the environment.
+
+\section*{From theorem to something runnable: REINFORCE}
+
+The theorem is a sum weighted by $\mu(s)$ --- exactly ``how often you visit $s$ running
+$\pi$.'' So instead of computing the sum literally, \textbf{sample} it: run the policy, and
+the states/actions encountered already occur in proportion to $\mu(s)\pi(a|s)$. Multiplying
+and dividing the inner sum by $\pi$ turns it into an expectation over the actually-sampled
+action $A_t$; using $\mathbb E_\pi[G_t \mid S_t,A_t] = q_\pi(S_t,A_t)$ (the definition of
+$q_\pi$) gives:
+$$\nabla J(\theta) \propto \mathbb E_\pi\left[G_t\,\frac{\nabla\pi(A_t|S_t,\theta)}{\pi(A_t|S_t,\theta)}\right].$$
+Everything inside is computable from one played-out episode: $G_t$ is the observed
+discounted sum of future rewards, and
+$\nabla\pi(A_t|S_t,\theta)/\pi(A_t|S_t,\theta) = \nabla\ln\pi(A_t|S_t,\theta)$
+(since $\nabla\ln x = \nabla x / x$) is computable by autodiff given the policy's formula.
+This vector is the \textbf{eligibility vector} --- the direction in $\theta$-space that
+most increases the probability of the action just taken. The \textbf{REINFORCE} update:
+$$\theta_{t+1} = \theta_t + \alpha\, G_t\, \nabla\ln\pi(A_t|S_t,\theta_t).$$
+In words: push $\theta$ toward making $A_t$ more likely in state $S_t$, scaled by how good
+the return turned out to be. Good outcome $\Rightarrow$ reinforce that action; bad
+(very negative) outcome $\Rightarrow$ push away from it.
+
+\textbf{``Monte Carlo''} here means $G_t$ is computed by summing real observed future
+rewards to the end of the episode, rather than estimated/bootstrapped from a model. This
+makes REINFORCE unbiased but high-variance (one lucky or unlucky episode swings $G_t$
+wildly) and usable only once a full episode has finished.
+
+\section*{Baselines: cutting variance without changing the target}
+
+Any function of state alone, $b(s)$, can be subtracted from $q_\pi(s,a)$ inside the
+theorem without changing its value:
+$$\nabla J(\theta) \propto \sum_s\mu(s)\sum_a\big(q_\pi(s,a)-b(s)\big)\nabla\pi(a|s,\theta).$$
+This holds because
+$$\sum_a b(s)\nabla\pi(a|s,\theta) = b(s)\,\nabla\!\left(\sum_a\pi(a|s,\theta)\right) = b(s)\,\nabla(1) = 0:$$
+probabilities over actions in a state must sum to 1 regardless of $\theta$, so its gradient
+is the zero vector --- multiplying by anything (here $b(s)$) and adding it in contributes
+exactly nothing, in expectation. The natural choice is $b(s) = \hat v(s,w)$ --- a learned
+estimate of how good state $s$ is in general. Then $G_t - \hat v(S_t,w)$ measures ``how
+much better/worse did this episode do than expected from this state'' --- much lower
+variance than $G_t$ alone, since it's \emph{relative} to a per-state expectation rather
+than an absolute number.
+
+\section*{Actor-critic: bootstrapping instead of waiting for the full return}
+
+REINFORCE-with-baseline still needs the full $G_t$ (wait for episode end).
+\textbf{Bootstrapping} means: instead of summing real future rewards to termination, use
+the current value estimate as a stand-in for ``everything after the next step'':
+$$G_{t:t+1} \doteq R_{t+1} + \gamma\hat v(S_{t+1}, w),$$
+the \textbf{one-step return} or \textbf{TD (temporal-difference) target}. Define the
+\textbf{TD error}:
+$$\delta_t \doteq R_{t+1} + \gamma\hat v(S_{t+1},w) - \hat v(S_t,w),$$
+literally ``reward received, plus a discounted estimate of what's still to come, minus
+what this state was previously thought to be worth.'' Substituting $\delta_t$ for
+$G_t - \hat v(S_t,w)$:
+$$\theta_{t+1} = \theta_t + \alpha\,\delta_t\,\nabla\ln\pi(A_t|S_t,\theta_t).$$
+This is fully \textbf{online} (updates every step, no waiting for episode end) --- the
+tradeoff is that $\delta_t$ is \emph{biased} (it depends on $\hat v$, itself imperfect and
+still being learned), but far lower variance than the Monte Carlo $G_t$. When the value
+function is used this way --- to critique the action just taken, rather than merely as a
+baseline for an already-fully-observed return --- it's the \textbf{critic}, and $\pi_\theta$
+is the \textbf{actor}; the combination is an \textbf{actor-critic method}. This
+bias/variance dial (one-step TD $\leftrightarrow$ full Monte Carlo) is exactly what GAE's
+$\lambda$ interpolates continuously --- GAE is the same $\delta_t$, generalized.
+
+\textbf{Eligibility traces} (using accumulators $z_\theta, z_w$): a running
+exponentially-decayed accumulator of past gradients/features, letting a TD-style method
+credit not just the immediately-preceding state/action but a decaying window of recent
+ones --- interpolating smoothly between the one-step update above and the full-episode
+Monte Carlo update, without storing the whole episode. Not used in \texttt{rl\_train.py}
+(GAE serves a related but distinct purpose there, computed after the fact over a stored
+rollout buffer rather than online via a decaying trace).
+
+\section*{Continuous actions --- matches the Gaussian policy in code}
+
+Everything above assumed a \emph{discrete} action, so $\pi(a|s,\theta)$ was literally a
+probability. For a continuous (real-valued) action, $\pi(a|s,\theta)$ is instead a
+\textbf{probability density function} --- $\pi(a|s,\theta)\,da$ gives the probability the
+action lands in a small interval of width $da$ around $a$; $\pi$ itself can exceed 1 (a
+density, not a probability). The canonical example is a \textbf{Gaussian/Normal policy}:
+$$\pi(a|s,\theta) = \frac{1}{\sigma(s,\theta)\sqrt{2\pi}}\exp\left(-\frac{(a-\mu(s,\theta))^2}{2\sigma(s,\theta)^2}\right).$$
+$\mu(s,\theta)$, $\sigma(s,\theta)$ --- the \textbf{mean} and \textbf{standard deviation} of
+the action distribution, each a parameterized function of state (simplest case: linear in
+features; in this codebase, a CNN for $\mu$ and a free, state-independent parameter for
+$\log\sigma$). Everything from REINFORCE through actor-critic goes through unchanged ---
+just plug this $\pi$'s eligibility vector, $\nabla\ln\pi(a|s,\theta)$, into the same update
+rules. This is precisely what \texttt{torch.distributions.Normal} plus
+\texttt{.log\_prob().sum()} implements: PyTorch computes $\nabla\ln\pi(a|s,\theta)$ via
+autodiff instead of deriving the closed form by hand.
+
+\section*{Two loose ends needed for PPO specifically}
+
+\begin{itemize}
+  \item \textbf{Advantage}: $A_\pi(s,a) \doteq q_\pi(s,a) - v_\pi(s)$ --- the
+  baseline-subtracted quantity from the baseline section above, given its own name and
+  symbol because it becomes the central object in later work like GAE/PPO.
+  \item \textbf{Importance sampling ratio}:
+  $$r_t(\theta) \doteq \frac{\pi_\theta(A_t|S_t)}{\pi_{\theta_{\text{old}}}(A_t|S_t)},$$
+  a correction factor letting data collected under an \emph{old} policy $\theta_{\text{old}}$
+  be reused to estimate a gradient for the \emph{current} $\theta$, by reweighting each
+  sample by how much more (or less) likely the new policy is to have taken that same
+  action. This is what lets PPO run several epochs of gradient steps on one batch of
+  rollout data instead of discarding it after a single REINFORCE-style update.
+\end{itemize}
+
+\end{document}
