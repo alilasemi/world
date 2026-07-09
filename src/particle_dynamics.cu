@@ -67,6 +67,8 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     CUDA_CHECK(cudaMemset(device_grid_force_y.data(), 0,
             static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
     device_occupancy_grid = DeviceVector<int>(occupancy_grid_size_x * occupancy_grid_size_y);
+    device_occupancy_velocity_x = DeviceVector<float>(occupancy_grid_size_x * occupancy_grid_size_y);
+    device_occupancy_velocity_y = DeviceVector<float>(occupancy_grid_size_x * occupancy_grid_size_y);
 
     // Create CUDA kernels
     const bool kt = config.kernel_timing;
@@ -93,6 +95,10 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
             device_state.data(), n, occupancy_grid_size_x, occupancy_grid_size_y, config.domain,
             config.threads_per_block, kt);
+    occupancy_velocity_kernel = std::make_unique<OccupancyVelocityKernel>(
+            device_occupancy_velocity_x.data(), device_occupancy_velocity_y.data(), device_state.data(),
+            device_material.data(), device_mass.data(), n, occupancy_grid_size_x, occupancy_grid_size_y,
+            config.domain, config.threads_per_block, kt);
 }
 
 
@@ -288,6 +294,7 @@ float ParticleDynamics::compute_max_acceleration() {
 
 void ParticleDynamics::update_occupancy_grid() {
     (*occupancy_grid_kernel)();
+    (*occupancy_velocity_kernel)();
 }
 
 

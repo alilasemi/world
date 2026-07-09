@@ -8,7 +8,10 @@ Protocol (WebSocket):
   TEXT "initialize"    → 8 BINARY messages: n, collision_grid_size (x,y int32),
                          force_grid_size (x,y int32), rl_max_force, num_triangles,
                          particle_radius, domain_bounds, xy
-  TEXT "get_occupancy" → BINARY: occ_m_x*occ_m_y int32 occupancy grid
+  TEXT "get_occupancy" → BINARY: occ_m_x*occ_m_y int32 occupancy grid, then
+                         occ_m_x*occ_m_y float32 mass-weighted velocity_x, then
+                         occ_m_x*occ_m_y float32 mass-weighted velocity_y
+                         (0 in cells with no particles)
   BINARY <2*f_m_x*f_m_y floats> → (no response) upload force grid
   TEXT "run"           → BINARY: (2*n + 7) floats = xy + metadata
 """
@@ -116,10 +119,14 @@ class ParticleEnv:
         return obs, self._reward(), done
 
     async def _get_occupancy(self) -> np.ndarray:
+        """Returns (3, occ_m_x, occ_m_y): [occupancy, velocity_x, velocity_y]."""
         await self.ws.send("get_occupancy")
         msg = await self.ws.recv()
-        return np.frombuffer(msg, dtype=np.int32).reshape(
-                self.occ_m_x, self.occ_m_y).astype(np.float32)
+        m2 = self.occ_m_x * self.occ_m_y
+        occ = np.frombuffer(msg, dtype=np.int32, count=m2).astype(np.float32)
+        vel = np.frombuffer(msg, dtype=np.float32, offset=m2 * 4, count=2 * m2)
+        vx, vy = vel[:m2], vel[m2:]
+        return np.stack([occ, vx, vy]).reshape(3, self.occ_m_x, self.occ_m_y)
 
     def _reward(self) -> float:
         dists = np.sqrt((self.xs - self.cfg.cx) ** 2 + (self.ys - self.cfg.cy) ** 2)
@@ -135,9 +142,10 @@ class ActorCritic(nn.Module):
         self.f_m_x = f_m_x
         self.f_m_y = f_m_y
 
-        # Shared backbone — operates at occupancy-grid resolution
+        # Shared backbone — operates at occupancy-grid resolution.
+        # 3 input channels: occupancy (0/1), mass-weighted velocity_x, velocity_y.
         self.backbone = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(3, 16, 3, padding=1), nn.ReLU(),
             nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(),
             nn.Conv2d(32, 32, 3, padding=1), nn.ReLU(),
         )
@@ -152,7 +160,7 @@ class ActorCritic(nn.Module):
         self.critic_fc   = nn.Linear(32 * 16, 1)
 
     def forward(self, obs: torch.Tensor):
-        """obs: (B, 1, occ_m, occ_m) → (mean (B,2,f_m,f_m), log_std, value)"""
+        """obs: (B, 3, occ_m, occ_m) → (mean (B,2,f_m,f_m), log_std, value)"""
         feat    = self.backbone(obs)                                    # (B, 32, occ_m, occ_m)
         a_feat  = self.actor_pool(feat)                                 # (B, 32, f_m, f_m)
         mean    = torch.tanh(self.actor_mean(a_feat)) * self.max_force  # (B, 2, f_m, f_m)
@@ -194,7 +202,7 @@ def compute_gae(rewards, values, dones, last_value, gamma=0.99, lam=0.95):
 
 def ppo_update(model, optimizer, obs_buf, act_buf, logp_buf, adv_buf, ret_buf,
                clip_eps, k_epochs, batch_size, entropy_coef, device):
-    obs_t  = torch.tensor(obs_buf,  dtype=torch.float32, device=device).unsqueeze(1)
+    obs_t  = torch.tensor(obs_buf,  dtype=torch.float32, device=device)
     act_t  = torch.tensor(act_buf,  dtype=torch.float32, device=device)
     logp_t = torch.tensor(logp_buf, dtype=torch.float32, device=device)
     adv_t  = torch.tensor(adv_buf,  dtype=torch.float32, device=device)
@@ -259,7 +267,7 @@ async def train(args, cfg: SimCfg):
         while ep < args.episodes:
             # ── Collect rollout ────────────────────────────────────────────
             while len(obs_buf) < args.rollout_steps and ep < args.episodes:
-                obs_t = torch.tensor(obs[None, None], dtype=torch.float32, device=device)
+                obs_t = torch.tensor(obs[None], dtype=torch.float32, device=device)
                 with torch.no_grad():
                     action, log_prob, value = model.act(obs_t)
 
@@ -304,7 +312,7 @@ async def train(args, cfg: SimCfg):
 
             # Bootstrap terminal value
             with torch.no_grad():
-                obs_t = torch.tensor(obs[None, None], dtype=torch.float32, device=device)
+                obs_t = torch.tensor(obs[None], dtype=torch.float32, device=device)
                 _, _, last_val = model(obs_t)
             last_val_np = last_val.item() * (1.0 - done_buf[-1])
 
