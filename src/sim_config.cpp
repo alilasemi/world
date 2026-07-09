@@ -62,8 +62,6 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "collision_grid_size_x") cfg.collision_grid_size_x = i();
         else if (key == "collision_grid_size_y") cfg.collision_grid_size_y = i();
         else if (key == "particles_per_cell") cfg.particles_per_cell = i();
-        else if (key == "force_grid_size_x") cfg.force_grid_size_x = i();
-        else if (key == "force_grid_size_y") cfg.force_grid_size_y = i();
         else if (key == "threads_per_block") cfg.threads_per_block = i();
         else warn_unknown(section, key);
     } else if (section == "domain") {
@@ -128,9 +126,6 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
     } else if (section == "time_integration") {
         if (key == "solver") cfg.time_integrator = value;
         else if (key == "picard_iterations") cfg.picard_iterations = i();
-        else warn_unknown(section, key);
-    } else if (section == "rl") {
-        if (key == "max_force") cfg.rl_max_force = f();
         else warn_unknown(section, key);
     } else {
         warn_unknown(section, key);

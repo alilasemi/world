@@ -38,16 +38,13 @@ struct PhysicsParams {
 // SimConfig reproduces the original behavior exactly (important: the tests and
 // the profiling/stability drivers rely on the default-constructed sim).
 struct SimConfig {
-    // Simulation / grid. The collision and force grids can have independent
-    // x/y cell counts -- the collision grid is used for neighbor lookup (see
-    // FindNeighborsKernel / "collision_grid" there), distinct from the force
-    // grid (externally-supplied body force field).
+    // Simulation / grid. The collision grid is used for neighbor lookup (see
+    // FindNeighborsKernel / "collision_grid" there); its x/y cell counts are
+    // independently configurable.
     float dt = 0.0001f;
     int collision_grid_size_x = 32;
     int collision_grid_size_y = 32;
     int particles_per_cell = 64;
-    int force_grid_size_x = 16;
-    int force_grid_size_y = 16;
     int threads_per_block = 256;
 
     // Domain bounds
@@ -112,9 +109,6 @@ struct SimConfig {
     // Time integration
     std::string time_integrator = "semi_implicit_euler";  // "semi_implicit_euler" | "backward_euler_picard"
     int picard_iterations = 3;
-
-    // RL agent
-    float rl_max_force = 0.1f;
 };
 
 // Loads a config from a YAML file, starting from defaults and overriding only

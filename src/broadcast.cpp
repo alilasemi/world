@@ -1,6 +1,5 @@
 #include "App.h"
 #include <cstdlib>
-#include <cstring>
 #include <iostream>
 #include <string>
 using std::unique_ptr;
@@ -24,7 +23,7 @@ int main(int argc, char** argv) {
     app.ws<PerSocketData>("/*", {
         .open = [](auto *ws) {
         },
-        .message = [&sim, &config, &app](auto *ws, std::string_view message, uWS::OpCode opCode) {
+        .message = [&sim, &config](auto *ws, std::string_view message, uWS::OpCode opCode) {
             std::cout << "Received message: " << message << std::endl;
             if (opCode == uWS::OpCode::TEXT) {
                 if (message == "initialize") {
@@ -40,15 +39,6 @@ int main(int argc, char** argv) {
                     int32_t collision_grid_size[2] = {sim->collision_grid_size_x, sim->collision_grid_size_y};
                     ws->send(std::string_view(reinterpret_cast<const char*>(collision_grid_size),
                             sizeof(collision_grid_size)), uWS::OpCode::BINARY);
-                    // Send force grid size (x then y, one message) so the
-                    // client can render the RL force field.
-                    int32_t force_grid_size[2] = {sim->force_grid_size_x, sim->force_grid_size_y};
-                    ws->send(std::string_view(reinterpret_cast<const char*>(force_grid_size),
-                            sizeof(force_grid_size)), uWS::OpCode::BINARY);
-                    // Send RL max force so the client can normalize arrow lengths
-                    float rl_max_force = config.rl_max_force;
-                    const char* rlmf_data = reinterpret_cast<const char*>(&rl_max_force);
-                    ws->send(std::string_view(rlmf_data, sizeof(rl_max_force)), uWS::OpCode::BINARY);
                     // Send rendering constants (only at initialize, never per frame):
                     // number of triangles per particle, then the particle render
                     // radius (which reuses the simulation's particle_radius).
@@ -77,7 +67,6 @@ int main(int argc, char** argv) {
                     // Kernel::wall_clock_time() is a lifetime accumulator, so
                     // snapshot before and after to get this frame's total.
                     float find0  = sim->find_neighbors_wct();
-                    float interp0 = sim->interpolate_force_wct();
                     float rhs0   = sim->compute_rhs_wct();
                     float step0  = sim->take_step_wct();
                     for (int steps = 0; steps < config.steps_per_frame; ++steps) {
@@ -97,65 +86,31 @@ int main(int argc, char** argv) {
                         std::exit(1);
                     }
                     float t_find  = sim->find_neighbors_wct()  - find0;
-                    float t_interp = sim->interpolate_force_wct() - interp0;
                     float t_rhs   = sim->compute_rhs_wct()   - rhs0;
                     float t_step  = sim->take_step_wct()  - step0;
                     sim->unpack_state();
                     // Pack xy + metadata into one buffer.
                     // Layout: [n*2 xy floats | sim_time | real_time_ratio |
-                    //          t_find_neighbors | t_interpolate_force |
-                    //          t_compute_rhs | t_take_step | t_unpack_state]
+                    //          t_find_neighbors | t_compute_rhs | t_take_step |
+                    //          t_unpack_state]
                     // All times are in milliseconds.
                     const size_t n_xy = sim->xy.size();
-                    std::vector<float> payload(n_xy + 7);
+                    std::vector<float> payload(n_xy + 6);
                     std::copy(sim->xy.begin(), sim->xy.end(), payload.begin());
                     payload[n_xy + 0] = sim->time;
                     payload[n_xy + 1] = sim->real_time_ratio;
                     payload[n_xy + 2] = t_find;
-                    payload[n_xy + 3] = t_interp;
-                    payload[n_xy + 4] = t_rhs;
-                    payload[n_xy + 5] = t_step;
-                    payload[n_xy + 6] = sim->time_unpack_state;
-                    // Append current force grids so the client can visualize the
-                    // RL agent's input. Zeros when no agent is connected.
-                    const size_t m2 = (size_t)sim->force_grid_size_x * sim->force_grid_size_y;
-                    HostVector<float> host_fx(m2), host_fy(m2);
-                    host_fx.copy_from_device(sim->device_grid_force_x);
-                    host_fy.copy_from_device(sim->device_grid_force_y);
-                    payload.insert(payload.end(), host_fx.data(), host_fx.data() + m2);
-                    payload.insert(payload.end(), host_fy.data(), host_fy.data() + m2);
+                    payload[n_xy + 3] = t_rhs;
+                    payload[n_xy + 4] = t_step;
+                    payload[n_xy + 5] = sim->time_unpack_state;
 
                     const char* state_data = reinterpret_cast<const char*>(payload.data());
                     size_t length = payload.size() * sizeof(float);
                     std::string_view state_sv(state_data, length);
                     ws->send(state_sv, uWS::OpCode::BINARY);
-                    // Push to any passive observers (e.g. browser watching RL training).
-                    app.publish("state_updates", state_sv, uWS::OpCode::BINARY);
-                } else if (message == "observe") {
-                    // Register this socket as a passive observer: it will receive
-                    // a state push after every "run" step without driving the sim.
-                    ws->subscribe("state_updates");
                 } else {
                     std::cout << "Unknown message: " << message << std::endl;
                 }
-            } else if (opCode == uWS::OpCode::BINARY) {
-                // Force-grid upload from RL agent.
-                // Payload: 2 * force_grid_size_x * force_grid_size_y floats,
-                // little-endian. First half: force_x (row-major
-                // cell_x*force_grid_size_y + cell_y). Second half: force_y.
-                if (!sim) return;
-                const size_t m2 = (size_t)sim->force_grid_size_x * sim->force_grid_size_y;
-                const size_t expected = 2 * m2 * sizeof(float);
-                if (message.size() != expected) {
-                    std::cout << "Force upload: unexpected size " << message.size()
-                              << " (expected " << expected << ")" << std::endl;
-                    return;
-                }
-                HostVector<float> host_fx(m2), host_fy(m2);
-                std::memcpy(host_fx.data(), message.data(), m2 * sizeof(float));
-                std::memcpy(host_fy.data(), message.data() + m2 * sizeof(float), m2 * sizeof(float));
-                sim->device_grid_force_x.copy_from_host(host_fx);
-                sim->device_grid_force_y.copy_from_host(host_fy);
             }
         }
     }).listen(config.port, [&config](auto *listen_socket) {

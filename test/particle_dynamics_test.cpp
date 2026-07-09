@@ -20,39 +20,6 @@ TEST(ParticleDynamicsTest, RunsStablyForFixedIterations) {
     EXPECT_TRUE(sim.is_stable());
 }
 
-TEST(ParticleDynamicsTest, BodyForceCancelsGravity) {
-    ParticleDynamics sim;
-    for (int i = 0; i < sim.n; ++i) {
-        sim.host_state[4 * i + 2] = 0.0f;
-        sim.host_state[4 * i + 3] = 0.0f;
-    }
-    sim.device_state.copy_from_host(sim.host_state);
-
-    std::vector<float> x0(static_cast<size_t>(sim.n)), y0(static_cast<size_t>(sim.n));
-    for (int i = 0; i < sim.n; ++i) {
-        x0[static_cast<size_t>(i)] = sim.host_state[4 * i + 0];
-        y0[static_cast<size_t>(i)] = sim.host_state[4 * i + 1];
-    }
-
-    const float g = 9.81f; // must match compute_rhs_kernel.cu's local g
-    const float mass = sim.host_mass[1]; // snow & sled share mass 0.04 here
-    HostVector<float> force_y(static_cast<size_t>(sim.force_grid_size_x) * static_cast<size_t>(sim.force_grid_size_y));
-    for (size_t i = 0; i < force_y.size(); ++i) {
-        force_y[i] = mass * g;
-    }
-    sim.device_grid_force_y.copy_from_host(force_y);
-
-    for (int i = 0; i < 100; ++i) {
-        sim.take_step();
-    }
-
-    sim.unpack_state();
-    for (int i = 0; i < sim.n; ++i) {
-        EXPECT_NEAR(sim.xy[2 * static_cast<size_t>(i) + 0], x0[static_cast<size_t>(i)], 1e-4f);
-        EXPECT_NEAR(sim.xy[2 * static_cast<size_t>(i) + 1], y0[static_cast<size_t>(i)], 1e-4f);
-    }
-}
-
 TEST(ParticleDynamicsTest, FreeFallMatchesKinematics) {
     ParticleDynamics sim;
     for (int i = 0; i < sim.n; ++i) {

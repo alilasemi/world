@@ -14,7 +14,6 @@ int main(int argc, char** argv) {
     ParticleDynamics sim(config);
 
     float find0  = sim.find_neighbors_wct();
-    float interp0 = sim.interpolate_force_wct();
     float rhs0   = sim.compute_rhs_wct();
     float step0  = sim.take_step_wct();
 
@@ -26,7 +25,6 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Time to update grid: "    << sim.find_neighbors_wct()    - find0  << " ms" << std::endl;
-    std::cout << "Time to interpolate:  "   << sim.interpolate_force_wct() - interp0 << " ms" << std::endl;
     std::cout << "Time to compute RHS: "    << sim.compute_rhs_wct()       - rhs0   << " ms" << std::endl;
     std::cout << "Time to take step: "      << sim.take_step_wct()         - step0  << " ms" << std::endl;
     std::cout << "Time to unpack_state: "   << sim.time_unpack_state                << " ms" << std::endl;

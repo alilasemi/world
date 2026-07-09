@@ -14,8 +14,6 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     collision_grid_size_x = config.collision_grid_size_x;
     collision_grid_size_y = config.collision_grid_size_y;
     particles_per_cell = config.particles_per_cell;
-    force_grid_size_x = config.force_grid_size_x;
-    force_grid_size_y = config.force_grid_size_y;
     dt = config.dt;
 
     // Initialize on host according to the configured initialization type.
@@ -49,20 +47,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     }
     device_mass.copy_from_host(host_mass);
 
-    // force_grid_size_x*force_grid_size_y grid of externally-supplied (e.g.
-    // AI) body forces. Independent of the collision grid above.
     device_state_n = DeviceVector<float>(4 * n);
-    device_body_force_x = DeviceVector<float>(n);
-    device_body_force_y = DeviceVector<float>(n);
-    device_grid_force_x = DeviceVector<float>(force_grid_size_x * force_grid_size_y);
-    device_grid_force_y = DeviceVector<float>(force_grid_size_x * force_grid_size_y);
-    // Nothing else initializes these, and InterpolateForceKernel reads them
-    // every step starting from the very first take_step() call -- zero is
-    // also the correct "no AI model configured yet" default.
-    CUDA_CHECK(cudaMemset(device_grid_force_x.data(), 0,
-            static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
-    CUDA_CHECK(cudaMemset(device_grid_force_y.data(), 0,
-            static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
 
     // Create CUDA kernels
     const bool kt = config.kernel_timing;
@@ -71,7 +56,6 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
             config.domain, config.threads_per_block, device_neighbors.data(), kt);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_neighbors.data(),
-            device_body_force_x.data(), device_body_force_y.data(),
             n, particles_per_cell, config.physics, config.threads_per_block, device_rhs.data(), kt);
     semi_implicit_euler_kernel = std::make_unique<SemiImplicitEulerKernel>(device_state.data(),
             device_rhs.data(), n, dt, config.threads_per_block, kt);
@@ -82,10 +66,6 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     host_energy = HostVector<float>(1);
     energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
             device_mass.data(), n, config.physics, config.threads_per_block, device_energy.data(), kt);
-
-    interpolate_force_kernel = std::make_unique<InterpolateForceKernel>(device_state.data(),
-            device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size_x, force_grid_size_y,
-            config.domain, config.threads_per_block, device_body_force_x.data(), device_body_force_y.data(), kt);
 }
 
 
@@ -223,7 +203,6 @@ float ParticleDynamics::get_real_time_ratio() {
 void ParticleDynamics::take_step() {
     if (config.time_integrator == "semi_implicit_euler") {
         (*find_neighbors_kernel)();
-        (*interpolate_force_kernel)();
         (*compute_rhs_kernel)();
         semi_implicit_euler_kernel->set_dt(dt);
         (*semi_implicit_euler_kernel)();
@@ -232,7 +211,6 @@ void ParticleDynamics::take_step() {
                 4 * n * sizeof(float), cudaMemcpyDeviceToDevice));
         for (int k = 0; k < config.picard_iterations; ++k) {
             (*find_neighbors_kernel)();
-            (*interpolate_force_kernel)();
             (*compute_rhs_kernel)();
             backward_euler_picard_kernel->set_dt(dt);
             (*backward_euler_picard_kernel)();
@@ -283,7 +261,6 @@ int ParticleDynamics::grid_overflow_count() const { return find_neighbors_kernel
 
 
 float ParticleDynamics::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
-float ParticleDynamics::interpolate_force_wct() const { return interpolate_force_kernel->wall_clock_time(); }
 float ParticleDynamics::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }
 float ParticleDynamics::take_step_wct()         const {
     if (config.time_integrator == "semi_implicit_euler") {

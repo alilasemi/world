@@ -48,7 +48,7 @@ __device__ inline float restitution_to_damping(float e, float k, float m) {
 
 
 __global__ void compute_rhs_kernel(const float* state, const int* material,
-        const float* mass, float* rhs, const int* neighbors, const float* body_force_x, const float* body_force_y,
+        const float* mass, float* rhs, const int* neighbors,
         size_t n, int particles_per_cell, PhysicsParams physics) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -133,11 +133,6 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
             }
         }
 
-        // Externally-supplied (e.g. AI-predicted) body force, already
-        // interpolated onto this particle's position.
-        force_x += body_force_x[i];
-        force_y += body_force_y[i];
-
         const float ax = force_x / mass[mat];
         const float ay = force_y / mass[mat];
 
@@ -150,16 +145,15 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
 
 
 ComputeRHSKernel::ComputeRHSKernel(const float* state_, const int* material_, const float* mass_,
-            const int* neighbors_, const float* body_force_x_, const float* body_force_y_,
+            const int* neighbors_,
             const int n_, const int particles_per_cell_, const PhysicsParams physics_,
             const int threads_per_block_, float* rhs_, bool timing_enabled_)
         : Kernel(n_, threads_per_block_, timing_enabled_), state(state_), material(material_), mass(mass_), neighbors(neighbors_),
-          body_force_x(body_force_x_), body_force_y(body_force_y_),
           particles_per_cell(particles_per_cell_), physics(physics_), rhs(rhs_) {
 }
 
 
 void ComputeRHSKernel::call_kernel(int blocks, int threads_per_block) {
     compute_rhs_kernel<<<blocks, threads_per_block>>>(state, material, mass, rhs,
-            neighbors, body_force_x, body_force_y, n, particles_per_cell, physics);
+            neighbors, n, particles_per_cell, physics);
 }

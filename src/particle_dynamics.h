@@ -8,7 +8,6 @@
 #include "energy_kernel.h"
 #include "find_neighbors_kernel.h"
 #include "host_vector.h"
-#include "interpolate_force_kernel.h"
 #include "sim_config.h"
 #include "backward_euler_picard_kernel.h"
 #include "semi_implicit_euler_kernel.h"
@@ -28,8 +27,6 @@ public:
     int collision_grid_size_x;
     int collision_grid_size_y;
     int particles_per_cell;
-    int force_grid_size_x;
-    int force_grid_size_y;
 
     std::vector<float> xy;
 
@@ -51,20 +48,6 @@ public:
     DeviceVector<float> device_energy;
     HostVector<float> host_energy;
 
-    // Per-particle body force, interpolated every step from the
-    // force_grid_size_x*force_grid_size_y grid fields below and consumed by
-    // ComputeRHSKernel.
-    DeviceVector<float> device_body_force_x;
-    DeviceVector<float> device_body_force_y;
-
-    // force_grid_size_x*force_grid_size_y externally-supplied (e.g.
-    // AI-predicted) force field, one scalar per cell, row-major
-    // grid[cell_x * force_grid_size_y + cell_y]. Zeroed at construction;
-    // nothing else writes these until an external caller uploads a field via
-    // DeviceVector::copy_from_host.
-    DeviceVector<float> device_grid_force_x;
-    DeviceVector<float> device_grid_force_y;
-
     // Timing
     float time_unpack_state = 0.f;
     cudaEvent_t start_event, stop_event;
@@ -84,7 +67,6 @@ public:
     // Lifetime-accumulated wall-clock times for each kernel (ms).
     // Take before/after deltas to get per-frame costs.
     float find_neighbors_wct()    const;
-    float interpolate_force_wct() const;
     float compute_rhs_wct()       const;
     float take_step_wct()         const;
 
@@ -126,5 +108,4 @@ private:
     std::unique_ptr<SemiImplicitEulerKernel> semi_implicit_euler_kernel;
     std::unique_ptr<BackwardEulerPicardKernel> backward_euler_picard_kernel;
     std::unique_ptr<EnergyKernel> energy_kernel;
-    std::unique_ptr<InterpolateForceKernel> interpolate_force_kernel;
 };
