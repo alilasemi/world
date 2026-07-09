@@ -201,7 +201,7 @@ def compute_gae(rewards, values, dones, last_value, gamma=0.99, lam=0.95):
 
 
 def ppo_update(model, optimizer, obs_buf, act_buf, logp_buf, adv_buf, ret_buf,
-               clip_eps, k_epochs, batch_size, entropy_coef, device):
+               clip_eps, k_epochs, batch_size, entropy_coef, device, vf_coef=0.5):
     obs_t  = torch.tensor(obs_buf,  dtype=torch.float32, device=device)
     act_t  = torch.tensor(act_buf,  dtype=torch.float32, device=device)
     logp_t = torch.tensor(logp_buf, dtype=torch.float32, device=device)
@@ -209,6 +209,16 @@ def ppo_update(model, optimizer, obs_buf, act_buf, logp_buf, adv_buf, ret_buf,
     ret_t  = torch.tensor(ret_buf,  dtype=torch.float32, device=device)
 
     adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
+    # Returns/values live on the raw reward scale (can be O(100s)+ for long
+    # horizons), while adv_t above is normalized to unit variance -- without
+    # rescaling v_loss the same way, it can outweigh p_loss by 100-1000x, so
+    # the single shared-backbone loss.backward() + one global
+    # clip_grad_norm_() below devotes nearly its entire gradient budget to the
+    # critic and starves the actor. Empirically this froze the actor's mean
+    # action after the very first update and kept it frozen for dozens of
+    # episodes -- observed as the policy permanently committing to whatever
+    # (essentially arbitrary) direction it happened to start with.
+    ret_std = ret_t.std() + 1e-8
 
     T = obs_t.shape[0]
     total_p = total_v = 0.0
@@ -224,8 +234,8 @@ def ppo_update(model, optimizer, obs_buf, act_buf, logp_buf, adv_buf, ret_buf,
                 ratio.clamp(1 - clip_eps, 1 + clip_eps) * adv_t[mb],
             )
             p_loss = -surr.mean()
-            v_loss = 0.5 * (new_val - ret_t[mb]).pow(2).mean()
-            loss   = p_loss - entropy_coef * entropy.mean() + v_loss
+            v_loss = 0.5 * ((new_val - ret_t[mb]) / ret_std).pow(2).mean()
+            loss   = p_loss - entropy_coef * entropy.mean() + vf_coef * v_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -330,6 +340,7 @@ async def train(args, cfg: SimCfg):
                 batch_size=args.batch_size,
                 entropy_coef=args.entropy_coef,
                 device=device,
+                vf_coef=args.vf_coef,
             )
             print(f"  [ppo] p_loss={p_loss:.4f}  v_loss={v_loss:.4f}")
 
@@ -371,6 +382,10 @@ def main():
     ap.add_argument("--batch-size",    type=int,   default=64)
     ap.add_argument("--clip-eps",      type=float, default=0.2)
     ap.add_argument("--entropy-coef",  type=float, default=0.01)
+    ap.add_argument("--vf-coef",       type=float, default=0.5,
+                    help="Value-loss coefficient; keeps the (return-scale) critic loss "
+                         "from swamping the (unit-variance-normalized) policy loss in the "
+                         "shared-backbone gradient")
     ap.add_argument("--gamma",         type=float, default=0.99)
     ap.add_argument("--lam",           type=float, default=0.95)
     args = ap.parse_args()
