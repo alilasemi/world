@@ -9,8 +9,6 @@
 #include "find_neighbors_kernel.h"
 #include "host_vector.h"
 #include "interpolate_force_kernel.h"
-#include "occupancy_grid_kernel.h"
-#include "occupancy_velocity_kernel.h"
 #include "sim_config.h"
 #include "backward_euler_picard_kernel.h"
 #include "semi_implicit_euler_kernel.h"
@@ -32,8 +30,6 @@ public:
     int particles_per_cell;
     int force_grid_size_x;
     int force_grid_size_y;
-    int occupancy_grid_size_x;
-    int occupancy_grid_size_y;
 
     std::vector<float> xy;
 
@@ -68,21 +64,6 @@ public:
     // DeviceVector::copy_from_host.
     DeviceVector<float> device_grid_force_x;
     DeviceVector<float> device_grid_force_y;
-
-    // occupancy_grid_size_x*occupancy_grid_size_y occupancy snapshot (0/1),
-    // same row-major layout as above. Only refreshed when
-    // update_occupancy_grid() is called -- not part of take_step().
-    DeviceVector<int> device_occupancy_grid;
-
-    // Mass-weighted average velocity of the particles in each occupancy-grid
-    // cell (0 for cells with no particles, or whose particles' total mass is
-    // 0 -- e.g. wall-only cells), same row-major layout and refresh timing as
-    // device_occupancy_grid above. Gives an RL observation built from these
-    // (plus device_occupancy_grid) velocity information the occupancy grid
-    // alone can't -- without it, two states with identical positions but
-    // different velocities are indistinguishable to the policy.
-    DeviceVector<float> device_occupancy_velocity_x;
-    DeviceVector<float> device_occupancy_velocity_y;
 
     // Timing
     float time_unpack_state = 0.f;
@@ -132,12 +113,6 @@ public:
     // some point. Not checked automatically every step; poll occasionally.
     int grid_overflow_count() const;
 
-    // Refreshes device_occupancy_grid and device_occupancy_velocity_x/y from
-    // current particle state. Not called from take_step() -- a future
-    // AI-driving loop must call this itself before reading these grids back
-    // to host; the snapshot is only as fresh as the last call.
-    void update_occupancy_grid();
-
     ~ParticleDynamics();
 
     // Prevent copying and assignment. It's error prone since CPU code can copy
@@ -152,6 +127,4 @@ private:
     std::unique_ptr<BackwardEulerPicardKernel> backward_euler_picard_kernel;
     std::unique_ptr<EnergyKernel> energy_kernel;
     std::unique_ptr<InterpolateForceKernel> interpolate_force_kernel;
-    std::unique_ptr<OccupancyGridKernel> occupancy_grid_kernel;
-    std::unique_ptr<OccupancyVelocityKernel> occupancy_velocity_kernel;
 };

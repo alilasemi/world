@@ -135,28 +135,6 @@ int main(int argc, char** argv) {
                     // Register this socket as a passive observer: it will receive
                     // a state push after every "run" step without driving the sim.
                     ws->subscribe("state_updates");
-                } else if (message == "get_occupancy") {
-                    if (!sim) {
-                        std::cout << "get_occupancy: sim not initialized" << std::endl;
-                        return;
-                    }
-                    sim->update_occupancy_grid();
-                    const size_t m2 = (size_t)sim->occupancy_grid_size_x * sim->occupancy_grid_size_y;
-                    HostVector<int> host_occ(m2);
-                    HostVector<float> host_vx(m2), host_vy(m2);
-                    host_occ.copy_from_device(sim->device_occupancy_grid);
-                    host_vx.copy_from_device(sim->device_occupancy_velocity_x);
-                    host_vy.copy_from_device(sim->device_occupancy_velocity_y);
-                    // One message, one consistent snapshot: [m2 int32 occupancy]
-                    // [m2 float32 velocity_x][m2 float32 velocity_y].
-                    std::vector<char> payload(m2 * sizeof(int) + 2 * m2 * sizeof(float));
-                    char* dst = payload.data();
-                    std::memcpy(dst, host_occ.data(), m2 * sizeof(int));
-                    dst += m2 * sizeof(int);
-                    std::memcpy(dst, host_vx.data(), m2 * sizeof(float));
-                    dst += m2 * sizeof(float);
-                    std::memcpy(dst, host_vy.data(), m2 * sizeof(float));
-                    ws->send(std::string_view(payload.data(), payload.size()), uWS::OpCode::BINARY);
                 } else {
                     std::cout << "Unknown message: " << message << std::endl;
                 }

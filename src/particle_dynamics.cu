@@ -16,8 +16,6 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     particles_per_cell = config.particles_per_cell;
     force_grid_size_x = config.force_grid_size_x;
     force_grid_size_y = config.force_grid_size_y;
-    occupancy_grid_size_x = config.occupancy_grid_size_x;
-    occupancy_grid_size_y = config.occupancy_grid_size_y;
     dt = config.dt;
 
     // Initialize on host according to the configured initialization type.
@@ -52,8 +50,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     device_mass.copy_from_host(host_mass);
 
     // force_grid_size_x*force_grid_size_y grid of externally-supplied (e.g.
-    // AI) body forces, plus the occupancy snapshot fed back to that external
-    // model. Independent of the collision grid above.
+    // AI) body forces. Independent of the collision grid above.
     device_state_n = DeviceVector<float>(4 * n);
     device_body_force_x = DeviceVector<float>(n);
     device_body_force_y = DeviceVector<float>(n);
@@ -66,9 +63,6 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
             static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
     CUDA_CHECK(cudaMemset(device_grid_force_y.data(), 0,
             static_cast<size_t>(force_grid_size_x) * static_cast<size_t>(force_grid_size_y) * sizeof(float)));
-    device_occupancy_grid = DeviceVector<int>(occupancy_grid_size_x * occupancy_grid_size_y);
-    device_occupancy_velocity_x = DeviceVector<float>(occupancy_grid_size_x * occupancy_grid_size_y);
-    device_occupancy_velocity_y = DeviceVector<float>(occupancy_grid_size_x * occupancy_grid_size_y);
 
     // Create CUDA kernels
     const bool kt = config.kernel_timing;
@@ -92,13 +86,6 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     interpolate_force_kernel = std::make_unique<InterpolateForceKernel>(device_state.data(),
             device_grid_force_x.data(), device_grid_force_y.data(), n, force_grid_size_x, force_grid_size_y,
             config.domain, config.threads_per_block, device_body_force_x.data(), device_body_force_y.data(), kt);
-    occupancy_grid_kernel = std::make_unique<OccupancyGridKernel>(device_occupancy_grid.data(),
-            device_state.data(), n, occupancy_grid_size_x, occupancy_grid_size_y, config.domain,
-            config.threads_per_block, kt);
-    occupancy_velocity_kernel = std::make_unique<OccupancyVelocityKernel>(
-            device_occupancy_velocity_x.data(), device_occupancy_velocity_y.data(), device_state.data(),
-            device_material.data(), device_mass.data(), n, occupancy_grid_size_x, occupancy_grid_size_y,
-            config.domain, config.threads_per_block, kt);
 }
 
 
@@ -289,12 +276,6 @@ float ParticleDynamics::compute_max_acceleration() {
         }
     }
     return max_accel;
-}
-
-
-void ParticleDynamics::update_occupancy_grid() {
-    (*occupancy_grid_kernel)();
-    (*occupancy_velocity_kernel)();
 }
 
 

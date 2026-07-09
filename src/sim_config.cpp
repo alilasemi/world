@@ -64,8 +64,6 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "particles_per_cell") cfg.particles_per_cell = i();
         else if (key == "force_grid_size_x") cfg.force_grid_size_x = i();
         else if (key == "force_grid_size_y") cfg.force_grid_size_y = i();
-        else if (key == "occupancy_grid_size_x") cfg.occupancy_grid_size_x = i();
-        else if (key == "occupancy_grid_size_y") cfg.occupancy_grid_size_y = i();
         else if (key == "threads_per_block") cfg.threads_per_block = i();
         else warn_unknown(section, key);
     } else if (section == "domain") {

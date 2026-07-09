@@ -48,7 +48,7 @@ test_obj_dir = $(build_dir)/obj
 # Files
 test_src = $(wildcard $(test_dir)/*.cpp)
 list_of_cpp_files = color_map particle_drawer sim_config
-list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics find_neighbors_kernel semi_implicit_euler_kernel backward_euler_picard_kernel energy_kernel interpolate_force_kernel occupancy_grid_kernel occupancy_velocity_kernel
+list_of_cuda_files = kernel compute_rhs_kernel particle_dynamics find_neighbors_kernel semi_implicit_euler_kernel backward_euler_picard_kernel energy_kernel interpolate_force_kernel
 # Sources
 CPP_SRCS := $(addprefix $(src_dir)/, $(list_of_cpp_files:=.cpp))
 CU_SRCS  := $(addprefix $(src_dir)/, $(list_of_cuda_files:=.cu))

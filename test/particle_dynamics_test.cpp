@@ -87,61 +87,6 @@ TEST(ParticleDynamicsTest, ParticleDoesNotPenetrateFloor) {
     EXPECT_TRUE(sim.is_stable());
 }
 
-TEST(ParticleDynamicsTest, OccupancyGridMarksCorrectCell) {
-    ParticleDynamics sim;
-    sim.host_state[0] = 0.0f;
-    sim.host_state[1] = 0.0f; // domain center -> occupancy grid's center cell
-    sim.device_state.copy_from_host(sim.host_state);
-    sim.update_occupancy_grid();
-    // Sized to occupancy_grid_size_x/y (distinct from force_grid_size_x/y --
-    // using the wrong one here previously overflowed the host buffer and
-    // segfaulted the whole test binary).
-    HostVector<int> occ(static_cast<size_t>(sim.occupancy_grid_size_x) * static_cast<size_t>(sim.occupancy_grid_size_y));
-    occ.copy_from_device(sim.device_occupancy_grid);
-    const size_t cell_x = static_cast<size_t>(sim.occupancy_grid_size_x) / 2;
-    const size_t cell_y = static_cast<size_t>(sim.occupancy_grid_size_y) / 2;
-    EXPECT_EQ(occ[cell_x * static_cast<size_t>(sim.occupancy_grid_size_y) + cell_y], 1);
-}
-
-TEST(ParticleDynamicsTest, OccupancyVelocityMatchesSingleParticleAndIsZeroElsewhere) {
-    ParticleDynamics sim;
-    // (0.8, -0.8) sits well outside the default cube's footprint
-    // (x in [-0.5, ~0.51], y in [0, ~1.01]) and the sled's position
-    // (sled_x=-0.9, sled_y=0.9), so this cell holds exactly one particle.
-    sim.host_state[0] = 0.8f;
-    sim.host_state[1] = -0.8f;
-    sim.host_state[2] = 2.0f;
-    sim.host_state[3] = -3.0f;
-    sim.device_state.copy_from_host(sim.host_state);
-    sim.update_occupancy_grid();
-
-    const size_t m2 = static_cast<size_t>(sim.occupancy_grid_size_x) * static_cast<size_t>(sim.occupancy_grid_size_y);
-    HostVector<int> occ(m2);
-    HostVector<float> vx(m2), vy(m2);
-    occ.copy_from_device(sim.device_occupancy_grid);
-    vx.copy_from_device(sim.device_occupancy_velocity_x);
-    vy.copy_from_device(sim.device_occupancy_velocity_y);
-
-    const size_t cell_x = static_cast<size_t>(
-            (0.8f - sim.config.domain.x_min) / (sim.config.domain.x_max - sim.config.domain.x_min)
-            * sim.occupancy_grid_size_x);
-    const size_t cell_y = static_cast<size_t>(
-            (-0.8f - sim.config.domain.y_min) / (sim.config.domain.y_max - sim.config.domain.y_min)
-            * sim.occupancy_grid_size_y);
-    const size_t cell = cell_x * static_cast<size_t>(sim.occupancy_grid_size_y) + cell_y;
-
-    // Mass-weighted average of a single particle equals that particle's own velocity.
-    EXPECT_EQ(occ[cell], 1);
-    EXPECT_NEAR(vx[cell], 2.0f, 1e-5f);
-    EXPECT_NEAR(vy[cell], -3.0f, 1e-5f);
-
-    // A cell with no particles at all reads exactly 0, not NaN/garbage.
-    const size_t empty_cell = 0; // far corner (x_min, y_min), outside cube/sled/test particle
-    EXPECT_EQ(occ[empty_cell], 0);
-    EXPECT_EQ(vx[empty_cell], 0.0f);
-    EXPECT_EQ(vy[empty_cell], 0.0f);
-}
-
 TEST(ParticleDynamicsTest, RepeatedRunsAreDeterministic) {
     auto run = [](std::vector<float>& out) {
         ParticleDynamics sim;
