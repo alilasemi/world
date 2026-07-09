@@ -100,24 +100,9 @@ const particleFragmentSource = `#version 300 es
     }
 `;
 
-// Force-field arrows are cyan, drawn with the same position-only vertex shader
-// as the grid. A separate fragment shader gives them their own color.
-const arrowFragmentSource = `#version 300 es
-
-    precision highp float;
-
-    out vec4 FragColor;
-
-    void main()
-    {
-        FragColor = vec4(0.0f, 1.0f, 1.0f, 1.0f);
-    }
-`;
-
 // Grid lines are a fixed red, so unlike the particle shader, no per-vertex
 // color attribute is needed. Shares the same domain-to-clip transform as
-// particleVertexSource above (also used by the force-field arrow shader,
-// which reuses this vertex shader with a different fragment shader).
+// particleVertexSource above.
 const gridVertexSource = `#version 300 es
 
     precision highp float;
@@ -249,19 +234,10 @@ class Graphics {
     VAO_grid;
     gridShader;
     gridVertexCount;
-    VBO_forces;
-    VAO_forces;
-    forceShader;
-    forceVerts;
-    forceVertCount;
-    forceM_x;
-    forceM_y;
-    rlMaxForce;
-    arrowMaxLen;
     domain;
     canvas;
 
-    constructor(drawer, collisionGridSizeX, collisionGridSizeY, forceGridSizeX, forceGridSizeY, rlMaxForce, domain) {
+    constructor(drawer, collisionGridSizeX, collisionGridSizeY, domain) {
         this.drawer = drawer;
         this.domain = domain;
         const canvas = document.querySelector("#gl-canvas");
@@ -284,7 +260,6 @@ class Graphics {
         // Create shaders
         this.shader = new Shader(gl, particleVertexSource, particleFragmentSource);
         this.gridShader = new Shader(gl, gridVertexSource, gridFragmentSource);
-        this.forceShader = new Shader(gl, gridVertexSource, arrowFragmentSource);
 
         // World-to-clip transform (see particleVertexSource/gridVertexSource
         // above): independent x/y scale factors, but since the canvas was
@@ -292,7 +267,7 @@ class Graphics {
         // distances still map to equal pixel distances in both directions.
         const domainScaleX = 2.0 / (domain.xMax - domain.xMin);
         const domainScaleY = 2.0 / (domain.yMax - domain.yMin);
-        for (const s of [this.shader, this.gridShader, this.forceShader]) {
+        for (const s of [this.shader, this.gridShader]) {
             s.setUniform2f('uDomainMin', domain.xMin, domain.yMin);
             s.setUniform2f('uDomainScale', domainScaleX, domainScaleY);
         }
@@ -337,27 +312,6 @@ class Graphics {
         gl.bufferData(gl.ARRAY_BUFFER, gridVertices, gl.STATIC_DRAW);
         gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
         gl.enableVertexAttribArray(0);
-
-        // Force-field arrows: dynamic geometry rebuilt each frame.
-        // Each cell gets 3 line segments (shaft + 2 arrowhead barbs) = 6 vertices.
-        this.forceM_x = forceGridSizeX;
-        this.forceM_y = forceGridSizeY;
-        this.rlMaxForce = rlMaxForce;
-        // 45% of one cell's (smaller) world-space dimension -- cells are
-        // rectangular, not square, when the domain itself is rectangular.
-        this.arrowMaxLen = Math.min(
-            (domain.xMax - domain.xMin) / forceGridSizeX,
-            (domain.yMax - domain.yMin) / forceGridSizeY,
-        ) * 0.45;
-        this.forceVertCount = forceGridSizeX * forceGridSizeY * 6;
-        this.forceVerts = new Float32Array(this.forceVertCount * 3);  // xyz per vertex
-        this.VAO_forces = gl.createVertexArray();
-        this.VBO_forces = gl.createBuffer();
-        gl.bindVertexArray(this.VAO_forces);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_forces);
-        gl.bufferData(gl.ARRAY_BUFFER, this.forceVerts, gl.DYNAMIC_DRAW);
-        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
-        gl.enableVertexAttribArray(0);
     }
 
     // Re-fits the canvas to the current window size (keeping the domain's
@@ -368,60 +322,6 @@ class Graphics {
     handleResize() {
         fitCanvasToDomain(this.canvas, this.domain);
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    }
-
-    // Rebuild arrow geometry from the current force grid and upload to GPU.
-    // forceX and forceY are Float32Array views of length m_x*m_y (row-major: x*m_y+y).
-    updateForces(forceX, forceY) {
-        const m_x = this.forceM_x;
-        const m_y = this.forceM_y;
-        const maxForce = this.rlMaxForce;
-        const arrowLen = this.arrowMaxLen;
-        const { xMin, xMax, yMin, yMax } = this.domain;
-        const cellW = (xMax - xMin) / m_x;
-        const cellH = (yMax - yMin) / m_y;
-        let v = 0;
-        for (let i = 0; i < m_x; i++) {
-            for (let j = 0; j < m_y; j++) {
-                const cx = xMin + (i + 0.5) * cellW;
-                const cy = yMin + (j + 0.5) * cellH;
-                const fx = forceX[i * m_y + j];
-                const fy = forceY[i * m_y + j];
-                const mag = Math.sqrt(fx * fx + fy * fy);
-
-                if (mag < 1e-10) {
-                    // Degenerate arrow: all verts at center, draws nothing
-                    for (let k = 0; k < 18; k++) this.forceVerts[v++] = 0;
-                } else {
-                    const scale = Math.min(mag / maxForce, 1.0) * arrowLen;
-                    const ux = fx / mag;  // unit vector
-                    const uy = fy / mag;
-                    const ex = cx + ux * scale;
-                    const ey = cy + uy * scale;
-
-                    // Shaft: tail → head
-                    this.forceVerts[v++] = cx; this.forceVerts[v++] = cy; this.forceVerts[v++] = 0;
-                    this.forceVerts[v++] = ex; this.forceVerts[v++] = ey; this.forceVerts[v++] = 0;
-
-                    // Arrowhead barbs at ±150° from the shaft direction
-                    const hLen = scale * 0.4;
-                    const angle = Math.atan2(uy, ux);
-                    const a1 = angle + Math.PI * 5 / 6;
-                    const a2 = angle - Math.PI * 5 / 6;
-                    this.forceVerts[v++] = ex; this.forceVerts[v++] = ey; this.forceVerts[v++] = 0;
-                    this.forceVerts[v++] = ex + Math.cos(a1) * hLen;
-                    this.forceVerts[v++] = ey + Math.sin(a1) * hLen;
-                    this.forceVerts[v++] = 0;
-                    this.forceVerts[v++] = ex; this.forceVerts[v++] = ey; this.forceVerts[v++] = 0;
-                    this.forceVerts[v++] = ex + Math.cos(a2) * hLen;
-                    this.forceVerts[v++] = ey + Math.sin(a2) * hLen;
-                    this.forceVerts[v++] = 0;
-                }
-            }
-        }
-        const gl = this.gl;
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.VBO_forces);
-        gl.bufferData(gl.ARRAY_BUFFER, this.forceVerts, gl.DYNAMIC_DRAW);
     }
 
     render() {
@@ -445,13 +345,6 @@ class Graphics {
             this.gridShader.use();
             gl.bindVertexArray(this.VAO_grid);
             gl.drawArrays(gl.LINES, 0, this.gridVertexCount);
-        }
-
-        // Render force-field arrows between grid and particles
-        if (document.getElementById('forceFieldButton').checked) {
-            this.forceShader.use();
-            gl.bindVertexArray(this.VAO_forces);
-            gl.drawArrays(gl.LINES, 0, this.forceVertCount);
         }
 
         // Render the particles
@@ -485,9 +378,6 @@ class Client {
     n;
     collisionGridSizeX;
     collisionGridSizeY;
-    forceGridSizeX;
-    forceGridSizeY;
-    rlMaxForce;
     domain;
     xy;
     drawer;
@@ -497,11 +387,10 @@ class Client {
     hud;
     lastFrameStart;   // performance.now() at start of previous steady-state message
 
-    constructor(mode, ip, observeMode) {
+    constructor(mode, ip) {
         this.state = 0;
         this.mode = mode;
         this.ip = ip;
-        this.observeMode = observeMode;
         this.hud = document.getElementById('hud');
         this.lastFrameStart = null;
 
@@ -551,32 +440,19 @@ class Client {
             console.log('Received collisionGridSize from server: ', this.collisionGridSizeX, this.collisionGridSizeY);
             ++this.state;
         } else if (this.state == 2) {
-            // Read force grid size (for drawing RL force-field arrows)
-            const dataView = new DataView(event.data);
-            this.forceGridSizeX = dataView.getInt32(0, true);
-            this.forceGridSizeY = dataView.getInt32(4, true);
-            console.log('Received forceGridSize from server: ', this.forceGridSizeX, this.forceGridSizeY);
-            ++this.state;
-        } else if (this.state == 3) {
-            // Read RL max force (for normalizing arrow lengths)
-            const dataView = new DataView(event.data);
-            this.rlMaxForce = dataView.getFloat32(0, true);
-            console.log('Received rlMaxForce from server: ', this.rlMaxForce);
-            ++this.state;
-        } else if (this.state == 4) {
             // Read rendering constant: triangles per particle (sent once at init)
             const dataView = new DataView(event.data);
             this.numTriangles = dataView.getInt32(0, true);
             console.log('Received numTriangles from server: ', this.numTriangles);
             ++this.state;
-        } else if (this.state == 5) {
+        } else if (this.state == 3) {
             // Read rendering constant: particle radius (sent once at init;
             // reuses the simulation's particle_radius)
             const dataView = new DataView(event.data);
             this.particleRadius = dataView.getFloat32(0, true);
             console.log('Received particleRadius from server: ', this.particleRadius);
             ++this.state;
-        } else if (this.state == 6) {
+        } else if (this.state == 4) {
             // Read domain bounds (x_min, x_max, y_min, y_max), for the
             // in-domain particle counter -- same bounds the server's
             // is_stable() checks.
@@ -589,20 +465,16 @@ class Client {
             };
             console.log('Received domain bounds from server: ', this.domain);
             ++this.state;
-        } else if (this.state == 7) {
+        } else if (this.state == 5) {
             // Read initial condition
             this.xy = new Float32Array(event.data);
             console.log('Received initial condition from server: ', this.xy);
             this.setup();
-            if (this.observeMode) {
-                this.socket.send('observe');
-            } else {
-                this.socket.send('run');
-            }
+            this.socket.send('run');
             ++this.state;
         } else {
             const restartButton = document.getElementById("restartButton");
-            if (!this.observeMode && restartButton.checked) {
+            if (restartButton.checked) {
                 this.state = 0;
                 this.lastFrameStart = null;
                 this.socket.send('initialize');
@@ -614,28 +486,16 @@ class Client {
 
                 // Parse payload:
                 // [n*2 xy | sim_time | real_time_ratio |
-                //  t_find_neighbors | t_interpolate_force |
-                //  t_compute_rhs | t_take_step | t_unpack_state]
+                //  t_find_neighbors | t_compute_rhs | t_take_step | t_unpack_state]
                 const floats = new Float32Array(event.data);
                 const base = this.n * 2;
                 this.xy.set(floats.subarray(0, base));
                 const simTime    = floats[base + 0];
                 const rtRatio    = floats[base + 1];
                 const tFind      = floats[base + 2];
-                const tInterp    = floats[base + 3];
-                const tRhs       = floats[base + 4];
-                const tStep      = floats[base + 5];
-                const tUnpack    = floats[base + 6];
-
-                // Update force-field arrows if the server sent force data
-                const forceBase = base + 7;
-                const m2 = this.forceGridSizeX * this.forceGridSizeY;
-                if (floats.length >= forceBase + 2 * m2) {
-                    this.graphics.updateForces(
-                        floats.subarray(forceBase, forceBase + m2),
-                        floats.subarray(forceBase + m2, forceBase + 2 * m2),
-                    );
-                }
+                const tRhs       = floats[base + 3];
+                const tStep      = floats[base + 4];
+                const tUnpack    = floats[base + 5];
 
                 // Client-side timers
                 const t0Draw = performance.now();
@@ -646,12 +506,10 @@ class Client {
                 this.graphics.render();
                 const tRender = performance.now() - t0Render;
 
-                if (!this.observeMode) {
-                    this.socket.send('run');
-                }
+                this.socket.send('run');
 
                 // Update HUD (after WS send so send latency is in "overhead")
-                const tServer = tFind + tInterp + tRhs + tStep + tUnpack;
+                const tServer = tFind + tRhs + tStep + tUnpack;
                 const tClient = tDraw + tRender;
                 const tSum    = tServer + tClient;
                 const ft      = frameTime ?? 0;
@@ -680,7 +538,6 @@ class Client {
                     sep,
                     fmtRow('Server', tServer, pct(tServer)),
                     fmtRow('Find neighbors',  tFind,   pct(tFind),   '  '),
-                    fmtRow('Interp. force',   tInterp, pct(tInterp), '  '),
                     fmtRow('Compute RHS',     tRhs,    pct(tRhs),    '  '),
                     fmtRow('Take step',       tStep,   pct(tStep),   '  '),
                     fmtRow('Unpack state',    tUnpack, pct(tUnpack), '  '),
@@ -704,8 +561,7 @@ class Client {
         this.drawer = new ParticleDrawer(this.n, this.numTriangles, this.particleRadius);
         this.drawer.draw(this.xy)
         // Set up graphics
-        this.graphics = new Graphics(this.drawer, this.collisionGridSizeX, this.collisionGridSizeY,
-                this.forceGridSizeX, this.forceGridSizeY, this.rlMaxForce, this.domain);
+        this.graphics = new Graphics(this.drawer, this.collisionGridSizeX, this.collisionGridSizeY, this.domain);
         console.log("Initialized graphics");
         this.graphics.render();
     }
@@ -713,8 +569,7 @@ class Client {
 
 
 function main(mode, ip) {
-    const observeMode = new URLSearchParams(window.location.search).has('observe');
-    const client = new Client(mode, ip, observeMode);
+    const client = new Client(mode, ip);
 }
 
 const config = await (await fetch('/config')).json();
