@@ -103,8 +103,35 @@ TEST(ParticleDynamicsTest, GridOverflowIsCountedAndStaysInBounds) {
         EXPECT_TRUE(std::isfinite(coordinate));
     }
 }
-TEST(ParticleDynamicsTest, SledParticleMovesUnderInitialVelocity) {
+
+// Total energy must never increase: after release, gravity is the only
+// external force and the dashpot and Coulomb friction can only dissipate. This
+// is the sharpest cheap check that the integrator is not injecting energy --
+// and it only became meaningful once compute_total_energy() accounted for
+// elastic energy stored in compressed contacts (before that, spring energy
+// reappearing as kinetic energy looked exactly like numerical heating).
+TEST(ParticleDynamicsTest, TotalEnergyNeverIncreases) {
     ParticleDynamics sim;
+    float previous = sim.compute_total_energy();
+    const float initial = previous;
+    ASSERT_GT(initial, 0.0f);
+    // Float32 atomicAdd over thousands of terms is not exactly reproducible, so
+    // allow a small slack rather than demanding strict monotonicity.
+    const float tolerance = 1e-3f * initial;
+    for (int interval = 0; interval < 12; ++interval) {
+        for (int step = 0; step < 100; ++step) {
+            sim.take_step();
+        }
+        const float current = sim.compute_total_energy();
+        EXPECT_LE(current, previous + tolerance)
+                << "energy rose at interval " << interval
+                << " (" << previous << " -> " << current << ")";
+        previous = current;
+    }
+    // And it should actually have dissipated a meaningful amount by now, not
+    // merely failed to grow.
+    EXPECT_LT(previous, initial);
+}
 
 // Every grain of a cube must receive the configured initial velocity -- this is
 // what makes a cube a thrown blob, and it is the whole basis of the dataset's

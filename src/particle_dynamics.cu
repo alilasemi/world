@@ -35,6 +35,11 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     // results as a flat n*kStencilCells*k neighbor array (27 cells in 3D).
     device_neighbors = DeviceVector<int>(
             static_cast<size_t>(n) * kStencilCells * static_cast<size_t>(particles_per_cell));
+    // Fill with the -1 sentinel ("no neighbors") so the array is never read
+    // uninitialized -- compute_total_energy() may be called before the first
+    // take_step() has populated it. 0xFF bytes == -1 for int.
+    CUDA_CHECK(cudaMemset(device_neighbors.data(), 0xFF,
+            device_neighbors.size() * sizeof(int)));
 
     time = 0.0f;
     last_time = 0.0f;
@@ -69,7 +74,8 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     device_energy = DeviceVector<float>(1);
     host_energy = HostVector<float>(1);
     energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
-            device_mass.data(), n, config.physics, config.threads_per_block, device_energy.data(), kt);
+            device_mass.data(), device_neighbors.data(), n, particles_per_cell,
+            config.physics, config.threads_per_block, device_energy.data(), kt);
 }
 
 
@@ -240,6 +246,14 @@ void ParticleDynamics::take_step() {
 }
 
 float ParticleDynamics::compute_total_energy() {
+    // Rebuild the neighbor list first: the pair-contact term needs neighbors
+    // consistent with the CURRENT positions, and take_step() leaves the list
+    // one step stale (it searches, then moves the particles). This is a
+    // diagnostic called on demand, so the extra pass is affordable -- but note
+    // it does advance FindNeighborsKernel's lifetime timing accumulator, so a
+    // caller that also reports per-frame kernel timings has to compensate (see
+    // src/profiling_sim.cpp).
+    (*find_neighbors_kernel)();
     (*energy_kernel)();
     host_energy.copy_from_device(device_energy);
     return host_energy[0];
