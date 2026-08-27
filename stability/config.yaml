@@ -43,23 +43,23 @@ physics:
   restitution: 0.3
 
 materials:
-  # Per-material masses, indexed by material id: 0 = wall, 1 = snow, 2 = sled.
-  masses: [0.0, 0.01, 0.01]
+  # Per-material masses, indexed by material id: 0 = wall, 1 = sand.
+  masses: [0.0, 0.01]
 
 initialization:
   type: cube                 # "cube" or "two_particles"
   x0: -0.5
   y0: -0.5
   z0: -0.5
-  # cube: rectangular grid of "snow" particles plus one "sled" particle on top.
+  # cube: 3D lattice of sand grains.
   # Particle spacing is derived from physics.particle_radius.
-  cube_length_x: 1.0
-  cube_length_y: 1.0
-  sled_x: -0.9
-  sled_y: 0.9
-  sled_vx: 0.4
-  sled_vy: 0.0
-  sled_material: 2
+  # Cubed, not squared, in 3D. 0.15 at radius 0.005 gives 15^3 = 3375 particles
+  # -- deliberately modest: this driver runs every (dt, max_force) combo to
+  # sim_time in its own subprocess, so cost is (combos x steps x particles) and
+  # the 2D-era 100x100 pile would make the full sweep take hours in 3D.
+  cube_length_x: 0.15
+  cube_length_y: 0.15
+  cube_length_z: 0.15
   particle_material: 1
   # two_particles: vertical offset between the two particles.
   two_particle_separation: 0.1

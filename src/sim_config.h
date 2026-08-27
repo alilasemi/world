@@ -73,23 +73,60 @@ struct SimConfig {
     // Physics
     PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, 1.0f, -1.0f, 1.0f, 0.3f};
 
-    // Per-material masses, indexed by material id (0 = wall, 1 = snow, 2 = sled).
-    std::vector<float> masses{0.0f, 0.04f, 0.04f};
+    // Per-material masses, indexed by material id: 0 = wall (massless/fixed),
+    // 1 = sand. The "snow" and "sled" materials were leftovers from an earlier
+    // sled-on-snow experiment and are gone.
+    std::vector<float> masses{0.0f, 0.04f};
 
-    // Initialization
-    std::string init_type = "cube";  // "cube" | "two_particles" | "single_particle"
+    // Initialization. The default cube is deliberately small (0.2 on a side at
+    // radius 0.01 -> 10^3 = 1000 particles): in 3D the particle count scales as
+    // the cube of the side length, and the GoogleTest suite constructs a
+    // default-configured sim repeatedly.
+    std::string init_type = "cube";  // "cube" | "two_particles" | "single_particle" | "file"
     float init_x0 = -0.5f;
     float init_y0 = 0.0f;
     float init_z0 = 0.0f;
+    // Initial velocity, applied to EVERY grain of a "cube" (and to the lone
+    // "single_particle"). This is what makes a cube a thrown blob.
     float init_vx0 = 0.0f;
     float init_vy0 = 0.0f;
-    float cube_length_x = 1.0f;  // particle spacing is derived from physics.particle_radius
-    float cube_length_y = 1.0f;
-    float sled_x = -0.9f;
-    float sled_y = 0.9f;
-    float sled_vx = 0.4f;
-    float sled_vy = 0.0f;
-    int sled_material = 2;
+    float init_vz0 = 0.0f;
+    // Random perturbation applied to each cube-lattice position, as a fraction
+    // of particle_radius, drawn uniformly in [-jitter, +jitter] per axis.
+    //
+    // This is not cosmetic. A perfect simple-cubic lattice is *exactly*
+    // symmetric: every sphere sits directly atop another with a vertical
+    // contact normal, so there is no lateral force anywhere and the block is
+    // self-supporting no matter how far it is dropped. Frictionless, it still
+    // collapsed because floating-point asymmetries grew unopposed; with
+    // friction those are suppressed and the lattice survives intact forever,
+    // which is a degenerate initial condition rather than granular material.
+    // A little jitter breaks the symmetry and gives a genuinely disordered
+    // packing. The same knob supplies the epsilon-perturbed initial conditions
+    // the predictability-horizon measurement needs.
+    //
+    // Deterministic: seeded from init_seed, so repeated runs of the same config
+    // are still bit-identical (RepeatedRunsAreDeterministic relies on this).
+    float init_jitter = 0.0f;
+    unsigned int init_seed = 12345u;
+
+    // A SECOND, independent random displacement applied on top of the jittered
+    // lattice, with its own magnitude (again as a fraction of particle_radius)
+    // and seed. This exists to generate ensembles that share an initial
+    // condition to within a controlled perturbation:
+    //   * tiny magnitude, varying perturbation_seed -> members that start
+    //     almost identically. Their separation over time measures the Lyapunov
+    //     growth rate and hence the predictability horizon.
+    //   * magnitude comparable to init_jitter -> members that are different
+    //     realizations of the same macroscopic state. Their spread is the
+    //     irreducible scatter a surrogate conditioned on theta cannot beat.
+    // Kept separate from init_jitter so the base packing can be held fixed
+    // (common random numbers) while only the perturbation varies.
+    float init_perturbation = 0.0f;
+    unsigned int init_perturbation_seed = 1u;
+    float cube_length_x = 0.2f;  // particle spacing is derived from physics.particle_radius
+    float cube_length_y = 0.2f;
+    float cube_length_z = 0.2f;
     float two_particle_separation = 0.1f;
     int particle_material = 1;
 

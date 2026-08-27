@@ -45,22 +45,34 @@ physics:
   restitution: 0.3
 
 materials:
-  # Per-material masses, indexed by material id: 0 = wall, 1 = snow, 2 = sled.
-  masses: [0.0, 0.8, 0.8]
+  # Per-material masses, indexed by material id: 0 = wall, 1 = sand.
+  masses: [0.0, 0.8]
 
 initialization:
-  type: cube                 # "cube" or "two_particles"
-  x0: -8
-  y0: -5
-  # cube: rectangular grid of "snow" particles plus one "sled" particle on top.
-  # Particle spacing is derived from physics.particle_radius.
-  cube_length_x: 16.0
-  cube_length_y: 2.5
-  sled_x: -0.9
-  sled_y: 0.9
-  sled_vx: 0.4
-  sled_vy: 0.0
-  sled_material: 2
+  type: cube                 # "cube", "two_particles" or "single_particle"
+  x0: -0.325
+  y0: -0.325
+  z0: -0.5                   # released above the floor: the impact disorders the
+                             # lattice, so what settles is a real granular heap
+                             # rather than the self-supporting simple-cubic block
+                             # you get by releasing it already resting (every
+                             # sphere sits directly atop another, vertical contact
+                             # normal, so that stack needs no friction at all)
+  # cube: a 3D lattice of sand grains, each given init velocity vx0/vy0/vz0.
+  # Particle
+  # spacing is derived from physics.particle_radius, so the count scales as the
+  # CUBE of the side length -- 0.65 at radius 0.01 gives 32^3 = 32768 particles.
+  # That is the real-time operating point in 3D on an RTX 2080 (~2x real time at
+  # dt=1e-3, leaving headroom for the unpack + WebSocket + render path); 0.72
+  # (46656) already falls just under 1x. See README for measured rates.
+  # Break the lattice's exact symmetry (fraction of particle_radius) so what
+  # settles is a disordered granular packing rather than a self-supporting
+  # simple-cubic block. See SimConfig::init_jitter.
+  jitter: 0.25
+  seed: 12345
+  cube_length_x: 0.65
+  cube_length_y: 0.65
+  cube_length_z: 0.65
   particle_material: 1
   # two_particles: offset between the two particles, along z.
   two_particle_separation: 0.1

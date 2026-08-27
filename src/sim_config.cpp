@@ -96,13 +96,13 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "vx0") cfg.init_vx0 = f();
         else if (key == "vy0") cfg.init_vy0 = f();
         else if (key == "vz0") cfg.init_vz0 = f();
+        else if (key == "jitter") cfg.init_jitter = f();
+        else if (key == "seed") cfg.init_seed = static_cast<unsigned int>(i());
+        else if (key == "perturbation") cfg.init_perturbation = f();
+        else if (key == "perturbation_seed") cfg.init_perturbation_seed = static_cast<unsigned int>(i());
         else if (key == "cube_length_x") cfg.cube_length_x = f();
         else if (key == "cube_length_y") cfg.cube_length_y = f();
-        else if (key == "sled_x") cfg.sled_x = f();
-        else if (key == "sled_y") cfg.sled_y = f();
-        else if (key == "sled_vx") cfg.sled_vx = f();
-        else if (key == "sled_vy") cfg.sled_vy = f();
-        else if (key == "sled_material") cfg.sled_material = i();
+        else if (key == "cube_length_z") cfg.cube_length_z = f();
         else if (key == "two_particle_separation") cfg.two_particle_separation = f();
         else if (key == "particle_material") cfg.particle_material = i();
         else warn_unknown(section, key);

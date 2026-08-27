@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <cmath>
 #include <chrono>
+#include <random>
 #include "particle_dynamics.h"
 #include "cuda_check.h"
 
@@ -39,8 +40,8 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     last_time = 0.0f;
     last_wall_clock_time = std::chrono::steady_clock::now();
     real_time_ratio = 0.0f;
-    // Per-material masses come from the config (index = material id; e.g.
-    // 0 = walls, 1 = snow, 2 = sled).
+    // Per-material masses come from the config (index = material id:
+    // 0 = wall, 1 = sand).
     const int num_materials = static_cast<int>(config.masses.size());
     host_mass = HostVector<float>(num_materials);
     device_mass = DeviceVector<float>(num_materials);
@@ -140,36 +141,56 @@ void ParticleDynamics::initialize_to_single_particle(const float x0, const float
 }
 
 
-void ParticleDynamics::initialize_to_cube(const float x0, const float y0) {
-    const float length_x = config.cube_length_x;
-    const float length_y = config.cube_length_y;
+void ParticleDynamics::initialize_to_cube(const float x0, const float y0, const float z0) {
     // Spacing uses the same radius as the collision physics so the initial
     // packing matches the contact model (deduped from compute_rhs_kernel).
     const float radius = config.physics.particle_radius;
-    int num_per_side_x = static_cast<int>(length_x / (2 * radius));
-    int num_per_side_y = static_cast<int>(length_y / (2 * radius));
-    resize(num_per_side_x * num_per_side_y + 1);
+    const float origin[kDim] = {x0, y0, z0};
+    const float length[kDim] = {config.cube_length_x, config.cube_length_y, config.cube_length_z};
+    int num_per_side[kDim];
+    for (int a = 0; a < kDim; ++a) {
+        num_per_side[a] = static_cast<int>(length[a] / (2 * radius));
+    }
+    // Particle count now scales as the cube of the side length, not the square.
+    resize(num_per_side[0] * num_per_side[1] * num_per_side[2]);
+    const float velocity[kDim] = {config.init_vx0, config.init_vy0, config.init_vz0};
+    printf("Initializing to a %dx%dx%d cube (%d grains) at (%.2f, %.2f, %.2f) "
+           "with velocity (%.2f, %.2f, %.2f)...\n",
+            num_per_side[0], num_per_side[1], num_per_side[2], n, x0, y0, z0,
+            velocity[0], velocity[1], velocity[2]);
 
-    for (size_t i = 0; i < num_per_side_x; ++i) {
-        for (size_t j = 0; j < num_per_side_y; ++j) {
-            host_state[4 * (i * num_per_side_y + j) + 0] = x0 + i * 2 * 1.01*radius;
-            host_state[4 * (i * num_per_side_y + j) + 1] = y0 + j * 2 * 1.01*radius;
-            host_state[4 * (i * num_per_side_y + j) + 2] = 0.0f;
-            host_state[4 * (i * num_per_side_y + j) + 3] = 0.0f;
+    // Deterministic jitter (see SimConfig::init_jitter): a fixed seed keeps
+    // repeated runs of the same config bit-identical.
+    std::mt19937 rng(config.init_seed);
+    std::uniform_real_distribution<float> jitter(-config.init_jitter * radius,
+                                                  config.init_jitter * radius);
+    // Independent stream, so changing the perturbation seed leaves the base
+    // packing bit-identical (see SimConfig::init_perturbation).
+    std::mt19937 perturbation_rng(config.init_perturbation_seed);
+    std::uniform_real_distribution<float> perturbation(
+            -config.init_perturbation * radius, config.init_perturbation * radius);
+    for (int i = 0; i < num_per_side[0]; ++i) {
+        for (int j = 0; j < num_per_side[1]; ++j) {
+            for (int k = 0; k < num_per_side[2]; ++k) {
+                const int lattice[kDim] = {i, j, k};
+                const int p = (i * num_per_side[1] + j) * num_per_side[2] + k;
+                for (int a = 0; a < kDim; ++a) {
+                    host_state[kStateStride * p + a] =
+                            origin[a] + static_cast<float>(lattice[a]) * 2.f * 1.01f * radius
+                            + (config.init_jitter > 0.f ? jitter(rng) : 0.f)
+                            + (config.init_perturbation > 0.f ? perturbation(perturbation_rng) : 0.f);
+                    host_state[kStateStride * p + kDim + a] = velocity[a];
+                }
+                host_material[p] = config.particle_material;
+            }
         }
     }
 
-    // Make one particle of sled on top
-    host_state[4 * (n - 1) + 0] = config.sled_x;
-    host_state[4 * (n - 1) + 1] = config.sled_y;
-    host_state[4 * (n - 1) + 2] = config.sled_vx;
-    host_state[4 * (n - 1) + 3] = config.sled_vy;
 
     // Set all particles to the snow material except for the sled particle.
     for (size_t i = 0; i < n - 1; ++i) {
         host_material[i] = config.particle_material;
     }
-    host_material[n - 1] = config.sled_material;
 }
 
 

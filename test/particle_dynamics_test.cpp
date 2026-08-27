@@ -105,11 +105,40 @@ TEST(ParticleDynamicsTest, GridOverflowIsCountedAndStaysInBounds) {
 }
 TEST(ParticleDynamicsTest, SledParticleMovesUnderInitialVelocity) {
     ParticleDynamics sim;
-    const int sled = sim.n - 1;
-    const float x0 = sim.host_state[4 * sled + 0];
-    for (int i = 0; i < 10; ++i) {
+
+// Every grain of a cube must receive the configured initial velocity -- this is
+// what makes a cube a thrown blob, and it is the whole basis of the dataset's
+// "action". (Replaces an older test that checked a lone "sled" particle moved;
+// the sled and snow materials were leftovers from an earlier experiment and are
+// gone, so the cube itself now carries the initial velocity.)
+TEST(ParticleDynamicsTest, CubeGrainsReceiveInitialVelocity) {
+    SimConfig config;
+    config.init_vx0 = 1.5f;
+    config.init_vy0 = -0.5f;
+    config.init_vz0 = 0.25f;
+    config.physics.gravity = 0.0f;   // isolate the initial velocity from free fall
+    ParticleDynamics sim(config);
+    ASSERT_GT(sim.n, 1);
+
+    // Applied to every grain, not just one.
+    const float expected[kDim] = {1.5f, -0.5f, 0.25f};
+    for (int i = 0; i < sim.n; ++i) {
+        for (int a = 0; a < kDim; ++a) {
+            EXPECT_FLOAT_EQ(sim.host_state[kStateStride * i + kDim + a], expected[a]);
+        }
+    }
+
+    // And it actually transports them: with gravity off and the blob starting
+    // clear of every wall, each axis advances by v*t.
+    std::vector<float> before(sim.positions.begin(), sim.positions.end());
+    const int steps = 50;
+    for (int step = 0; step < steps; ++step) {
         sim.take_step();
     }
     sim.unpack_state();
-    EXPECT_GT(sim.xy[2 * static_cast<size_t>(sled) + 0], x0);
+    const float elapsed = sim.dt * static_cast<float>(steps);
+    for (int a = 0; a < kDim; ++a) {
+        const float moved = sim.positions[a] - before[a];
+        EXPECT_NEAR(moved, expected[a] * elapsed, 1e-4f * std::abs(expected[a] * elapsed) + 1e-6f);
+    }
 }
