@@ -1,0 +1,322 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\title{Bounding the Stable Time Step for Explicit Time Integration:\\
+Stiffness, Linear Stability Theory, and Application to a\\
+Penalty Spring--Dashpot Contact Model}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Motivation}
+
+The particle simulation in this repository integrates a system of ODEs
+\begin{equation}
+  \dot{\mathbf{y}} = f(\mathbf{y}), \qquad \mathbf{y} = (x, y, v_x, v_y) \text{ per particle},
+\end{equation}
+using either semi-implicit (symplectic) Euler or a fixed-point (Picard) backward Euler
+scheme, with forces dominated by a linear penalty spring plus a linear dashpot at each
+active contact. \texttt{stability\_and\_accuracy.cpp} currently determines a stable
+\texttt{dt} \emph{empirically}, by sweeping \texttt{dt} $\times$ \texttt{max\_force} and
+classifying each combination as \texttt{UNSTABLE}, \texttt{STEADY}, or \texttt{TIMED\_OUT}.
+This document derives the corresponding \emph{analytical} bound, so that the empirical
+sweep can be understood as measuring a quantity that is, for this particular force model,
+solvable in closed form.
+
+\section{Linear stability theory}
+
+\subsection{The Dahlquist test equation and regions of absolute stability}
+
+For a general nonlinear system $\dot{\mathbf{y}} = f(\mathbf{y})$, freeze the state at
+$\mathbf{y}_0$ and linearize:
+\begin{equation}
+  \dot{\mathbf{y}} \approx J \mathbf{y}, \qquad J = \left.\frac{\partial f}{\partial \mathbf{y}}\right|_{\mathbf{y}_0}.
+\end{equation}
+Each eigenvalue $\lambda$ of $J$ behaves, locally, like an independent copy of the scalar
+\emph{Dahlquist test equation}
+\begin{equation}
+  \dot y = \lambda y, \qquad \lambda \in \mathbb{C},
+  \label{eq:dahlquist}
+\end{equation}
+which is the basis of essentially all step-size stability theory for one-step methods
+\cite{dahlquist1963}. A method's \emph{region of absolute stability} $S \subset \mathbb{C}$
+is the set of values $z = h\lambda$ for which the method's amplification factor $R(z)$
+(defined by $y_{n+1} = R(z)\, y_n$ applied to \eqref{eq:dahlquist}) satisfies $|R(z)| \le 1$.
+A step size $h$ is linearly stable for a given $J$ iff $h\lambda \in S$ for every eigenvalue
+$\lambda$ of $J$.
+
+For \textbf{forward (explicit) Euler}, $y_{n+1} = y_n + h\lambda y_n = (1+h\lambda) y_n$, so
+$R(z) = 1+z$ and
+\begin{equation}
+  S_{\text{FE}} = \{\, z \in \mathbb{C} : |1+z| \le 1 \,\},
+\end{equation}
+the closed disk of radius 1 centered at $-1$. For real $\lambda < 0$ this reduces to the
+familiar
+\begin{equation}
+  h \le \frac{2}{|\lambda|}.
+  \label{eq:fe-real-bound}
+\end{equation}
+
+For \textbf{backward Euler}, $y_{n+1} = y_n + h\lambda y_{n+1}$, so $R(z) = 1/(1-z)$ and
+$S_{\text{BE}} \supseteq$ the entire left half-plane $\mathrm{Re}(z) \le 0$ — backward Euler
+is \emph{A-stable} \cite{dahlquist1963}: linearly unconditionally stable for any $\lambda$
+with $\mathrm{Re}(\lambda) \le 0$, regardless of $h$.
+
+\subsection{Stiffness}
+
+Given the eigenvalues $\{\lambda_i\}$ of $J$ relevant to the dynamics of interest, the
+\emph{stiffness ratio} is
+\begin{equation}
+  S = \frac{\max_i |\mathrm{Re}(\lambda_i)|}{\min_i |\mathrm{Re}(\lambda_i)|}.
+\end{equation}
+A system is called \emph{stiff} when $S \gg 1$: an explicit method is forced by
+\eqref{eq:fe-real-bound} to resolve the fastest (often physically uninteresting) mode just
+to remain stable, even though the mode of actual interest decays or oscillates far more
+slowly. This is the definition introduced by Curtiss and Hirschfelder in the paper that
+coined the term "stiff equations," originally for chemical-kinetics ODEs
+\cite{curtisshirschfelder1952}.
+
+\subsection{Backward Euler with Picard iteration: a separate constraint}
+
+A-stability of backward Euler is a statement about the \emph{linear} amplification factor;
+it says nothing about whether the nonlinear equation $\mathbf{y}_{n+1} = \mathbf{y}_n + h
+f(\mathbf{y}_{n+1})$ can actually be solved by fixed-point (Picard) iteration, as
+\texttt{BackwardEulerPicardKernel} does. Writing the iteration as
+$\mathbf{y}^{(k+1)} = \mathbf{y}_n + h f(\mathbf{y}^{(k)})$, this is a contraction (and
+therefore converges, by the Banach fixed-point theorem) only if
+\begin{equation}
+  h \left\| \frac{\partial f}{\partial \mathbf{y}} \right\| < 1,
+  \label{eq:picard-contraction}
+\end{equation}
+i.e.\ $h$ times the local Lipschitz constant of $f$ must be less than 1. This is a
+genuinely different — usually much looser — bound than forward Euler's linear stability
+bound \eqref{eq:fe-real-bound}, and it constrains \emph{iteration convergence}, not the
+stability of the underlying scheme.
+
+\subsection{Estimating the spectral radius numerically}
+
+For large or expensive-to-differentiate systems, one rarely forms and diagonalizes $J$
+explicitly. Two standard cheap alternatives:
+
+\begin{itemize}
+  \item \textbf{Gershgorin circle theorem}: every eigenvalue of $J$ lies in some disk
+    centered at $J_{ii}$ with radius $\sum_{j \ne i} |J_{ij}|$ — a bound computable in a
+    single pass over $J$ with no eigensolve.
+  \item \textbf{Power iteration}, applied either to $J$ directly or to a finite-difference
+    directional derivative $(f(\mathbf{y}+\varepsilon \mathbf{v}) - f(\mathbf{y}))/\varepsilon$
+    so that $J$ is never assembled at all. This is exactly the technique used by explicit
+    stabilized Runge--Kutta--Chebyshev (RKC) integrators to adaptively re-estimate the
+    spectral radius of $J$ every step \cite{sommeijershampineverwer1997}.
+\end{itemize}
+
+The \texttt{dt} $\times$ \texttt{max\_force} sweep in \texttt{stability\_and\_accuracy.cpp}
+is, in this sense, a brute-force empirical stand-in for the same question these methods
+answer analytically: it \emph{measures} the stability boundary by bisection/sweep rather
+than predicting it from $J$.
+
+\section{Closed-form bound for the penalty spring--dashpot contact model}
+
+\subsection{The linearized contact ODE}
+
+Each active contact in \texttt{compute\_rhs\_kernel.cu} applies a linear penalty spring
+plus a linear dashpot along the contact normal. Restricting attention to the
+one-dimensional normal direction of a single contact, with overlap $x$ (positive when
+penetrating), this is exactly a damped harmonic oscillator:
+\begin{equation}
+  m_{\text{eff}}\, \ddot x + c\, \dot x + k\, x = 0,
+  \label{eq:sho}
+\end{equation}
+where, matching the code's own quantities,
+\begin{align}
+  k &= \frac{\texttt{max\_force}}{\texttt{particle\_radius}}, \\
+  m_{\text{eff}} &= \begin{cases}
+    m_i & \text{particle--wall/floor/ceiling (infinite-mass boundary limit)} \\
+    \dfrac{m_i m_j}{m_i + m_j} & \text{particle--particle (reduced mass)}
+  \end{cases}
+\end{align}
+and $c$ is given by \texttt{restitution\_to\_damping()}, i.e.\ derived from the target
+coefficient of restitution $e \in [0,1]$ via the standard DEM restitution-to-damping
+relation \cite{tsuji1992,direnzodimaio2004}.
+
+Define the undamped natural frequency and damping ratio
+\begin{equation}
+  \omega_n = \sqrt{\frac{k}{m_{\text{eff}}}}, \qquad
+  \zeta = \frac{c}{2\sqrt{k\, m_{\text{eff}}}}.
+\end{equation}
+
+\subsection{Eigenvalues of the linearized contact}
+
+Writing \eqref{eq:sho} as a first-order system with $y_1 = x$, $y_2 = \dot x$:
+\begin{equation}
+  \frac{d}{dt}\begin{pmatrix} y_1 \\ y_2 \end{pmatrix}
+  = \underbrace{\begin{pmatrix} 0 & 1 \\ -\omega_n^2 & -2\zeta\omega_n \end{pmatrix}}_{J}
+  \begin{pmatrix} y_1 \\ y_2 \end{pmatrix},
+\end{equation}
+with characteristic polynomial $\lambda^2 + 2\zeta\omega_n \lambda + \omega_n^2 = 0$, giving
+\begin{equation}
+  \lambda = -\zeta\omega_n \pm \omega_n\sqrt{\zeta^2 - 1}.
+  \label{eq:eigs}
+\end{equation}
+For $0 \le \zeta < 1$ (underdamped — i.e.\ $e > 0$, the usual case) the eigenvalues are the
+complex-conjugate pair
+\begin{equation}
+  \lambda_{\pm} = -\zeta\omega_n \pm i\,\omega_n\sqrt{1-\zeta^2}.
+  \label{eq:eigs-complex}
+\end{equation}
+
+\subsection{Forward Euler stability bound on the damped oscillator}
+
+Apply the forward Euler stability condition $|1 + h\lambda| \le 1$ to \eqref{eq:eigs-complex}.
+Write $z = 1 + h\lambda_+ = (1 - h\zeta\omega_n) + i\, h\omega_n\sqrt{1-\zeta^2}$. Then
+\begin{align}
+  |z|^2 &= (1 - h\zeta\omega_n)^2 + h^2\omega_n^2(1-\zeta^2) \\
+        &= 1 - 2h\zeta\omega_n + h^2\zeta^2\omega_n^2 + h^2\omega_n^2 - h^2\omega_n^2\zeta^2 \\
+        &= 1 - 2h\zeta\omega_n + h^2\omega_n^2.
+\end{align}
+Requiring $|z|^2 \le 1$:
+\begin{equation}
+  -2h\zeta\omega_n + h^2\omega_n^2 \le 0
+  \quad\Longleftrightarrow\quad
+  h\left(h\omega_n^2 - 2\zeta\omega_n\right) \le 0
+  \quad\Longleftrightarrow\quad
+  h \le \frac{2\zeta}{\omega_n} \qquad (h > 0).
+  \label{eq:fe-bound-damped}
+\end{equation}
+
+\textbf{Consequence.} As $\zeta \to 0$ (undamped, perfectly elastic contact, $e \to 1$),
+the bound \eqref{eq:fe-bound-damped} goes to \emph{zero}. This recovers the well-known fact
+that plain forward Euler is \emph{unconditionally unstable} for an undamped oscillator, for
+any step size $h > 0$ — the eigenvalues in \eqref{eq:eigs-complex} sit exactly on the
+imaginary axis when $\zeta=0$, and the forward Euler stability disk $S_{\text{FE}}$ touches
+the imaginary axis only at the origin. Damping is the \emph{only} thing buying a nonzero
+stable step for plain forward Euler on this model.
+
+\subsection{Semi-implicit (symplectic) Euler}
+
+The scheme actually used by \texttt{SemiImplicitEulerKernel} updates velocity first, then
+position using the \emph{updated} velocity:
+\begin{align}
+  v_{n+1} &= v_n + h\big(-\omega_n^2 x_n - 2\zeta\omega_n v_n\big), \\
+  x_{n+1} &= x_n + h\, v_{n+1}.
+\end{align}
+In matrix form, $\begin{pmatrix} x_{n+1} \\ v_{n+1} \end{pmatrix} = M \begin{pmatrix} x_n \\ v_n \end{pmatrix}$ with
+\begin{equation}
+  M = \begin{pmatrix} 1 - h^2\omega_n^2 & h - 2\zeta\omega_n h^2 \\ -h\omega_n^2 & 1 - 2\zeta\omega_n h \end{pmatrix}.
+\end{equation}
+In the undamped limit $\zeta = 0$,
+\begin{equation}
+  M = \begin{pmatrix} 1 - h^2\omega_n^2 & h \\ -h\omega_n^2 & 1 \end{pmatrix},
+  \qquad \det M = 1, \qquad \operatorname{tr} M = 2 - h^2\omega_n^2.
+\end{equation}
+Since $\det M = 1$, the eigenvalues of $M$ are reciprocal ($\mu_1\mu_2 = 1$); they lie on
+the unit circle (marginal, bounded stability) exactly when $|\operatorname{tr} M| \le 2$,
+i.e.
+\begin{equation}
+  \Big| 2 - h^2\omega_n^2 \Big| \le 2 \quad\Longleftrightarrow\quad h \le \frac{2}{\omega_n}.
+  \label{eq:si-bound}
+\end{equation}
+Unlike \eqref{eq:fe-bound-damped}, this bound is \emph{finite even as $\zeta \to 0$}: this
+is the standard reason symplectic/leapfrog-type schemes are used for oscillatory or
+near-elastic contact dynamics rather than plain forward Euler, and it is exactly the
+$h \lesssim 2/\omega_n = 2\sqrt{m_{\text{eff}}/k}$ scaling that appears throughout the DEM
+literature as the \emph{critical} or \emph{Rayleigh} time step
+\cite{cundallstrack1979,osullivanbray2004}.
+
+\subsection{Practical bound for this simulation}
+
+Since $k$, \texttt{particle\_radius}, and per-material mass are static configuration, the
+binding constraint is set by whichever \emph{currently active} contact has the largest
+$\omega_n = \sqrt{k/m_{\text{eff}}}$ — i.e.\ the lightest, stiffest, most nearly-elastic
+pair, which in this codebase's material set is almost always a wall contact using a light
+particle's own mass (the infinite-mass boundary limit already used in
+\texttt{restitution\_to\_damping()}), or a snow--snow contact if snow is the lightest
+material. Because this does not depend on the runtime particle configuration, it can be
+computed once from \texttt{config.yaml} — via \eqref{eq:si-bound} for the semi-implicit
+integrator, or empirically applying a conservative safety factor (0.2--0.4, per
+\cite{osullivanbray2004}) — as a much cheaper substitute for, or a sanity check on, the
+brute-force \texttt{dt} sweep in \texttt{stability\_and\_accuracy.cpp}.
+
+\section{Summary}
+
+\begin{itemize}
+  \item Local linear stability of any explicit one-step method reduces to checking each
+    eigenvalue of the local Jacobian against the method's region of absolute stability
+    (Section 2.1).
+  \item Stiffness is the ratio of fastest to slowest relevant eigenvalue magnitudes
+    (Section 2.2); it is what forces an explicit step size far below what the dynamics of
+    interest would otherwise require.
+  \item For large systems, the spectral radius of $J$ can be estimated cheaply via
+    Gershgorin's theorem or power iteration, without ever forming $J$ explicitly
+    (Section 2.4) — the same idea that underlies adaptive RKC-family integrators.
+  \item This simulation's contact model is, per-contact, a damped harmonic oscillator, so
+    its stable step size is solvable in closed form: plain forward Euler is unconditionally
+    unstable in the undamped limit (\eqref{eq:fe-bound-damped}), while the semi-implicit
+    Euler scheme actually used has the finite bound $h \le 2/\omega_n$
+    (\eqref{eq:si-bound}), matching the classic Rayleigh/critical time step result from the
+    DEM literature.
+\end{itemize}
+
+\begin{thebibliography}{9}
+
+\bibitem{dahlquist1963}
+G.~Dahlquist,
+\emph{A special stability problem for linear multistep methods},
+BIT Numerical Mathematics \textbf{3}, 27--43 (1963).
+
+\bibitem{curtisshirschfelder1952}
+C.~F.~Curtiss and J.~O.~Hirschfelder,
+\emph{Integration of stiff equations},
+Proceedings of the National Academy of Sciences \textbf{38}(3), 235--243 (1952).
+
+\bibitem{sommeijershampineverwer1997}
+B.~P.~Sommeijer, L.~F.~Shampine, and J.~G.~Verwer,
+\emph{RKC: an explicit solver for parabolic PDEs},
+Journal of Computational and Applied Mathematics \textbf{88}(2), 315--326 (1997).
+
+\bibitem{cundallstrack1979}
+P.~A.~Cundall and O.~D.~L.~Strack,
+\emph{A discrete numerical model for granular assemblies},
+G\'{e}otechnique \textbf{29}(1), 47--65 (1979).
+
+\bibitem{osullivanbray2004}
+C.~O'Sullivan and J.~D.~Bray,
+\emph{Selecting a suitable time step for discrete element simulations that use the central
+difference time integration scheme},
+Engineering Computations \textbf{21}(2/3/4), 278--303 (2004).
+
+\bibitem{tsuji1992}
+Y.~Tsuji, T.~Tanaka, and T.~Ishida,
+\emph{Lagrangian numerical simulation of plug flow of cohesionless particles in a
+horizontal pipe},
+Powder Technology \textbf{71}(3), 239--250 (1992).
+
+\bibitem{direnzodimaio2004}
+A.~Di Renzo and F.~P.~Di Maio,
+\emph{Comparison of contact-force models for the simulation of collisions in
+DEM-based granular flow codes},
+Chemical Engineering Science \textbf{59}(3), 525--541 (2004).
+
+\bibitem{gear1971}
+C.~W.~Gear,
+\emph{Numerical Initial Value Problems in Ordinary Differential Equations},
+Prentice-Hall (1971).
+
+\bibitem{hairerwanner1996}
+E.~Hairer and G.~Wanner,
+\emph{Solving Ordinary Differential Equations II: Stiff and Differential-Algebraic
+Problems}, 2nd ed., Springer Series in Computational Mathematics (1996).
+
+\bibitem{courantfriedrichslewy1928}
+R.~Courant, K.~Friedrichs, and H.~Lewy,
+\emph{\"Uber die partiellen Differenzengleichungen der mathematischen Physik},
+Mathematische Annalen \textbf{100}(1), 32--74 (1928).
+
+\end{thebibliography}
+
+\end{document}
