@@ -335,6 +335,10 @@ virtualenv so nothing leaks into the system interpreter:
 python3 -m venv surrogate/.venv
 surrogate/.venv/bin/pip install -r surrogate/requirements.txt
 ```
+- `surrogate/make_design.py` — Latin-hypercube (scrambled Sobol when scipy is present) design over the
+  throw/material parameters, written to `dataset/design.csv`. A tensor grid costs `k**d` and dies past
+  d~4 — the existing `dt x max_force x restitution` sweep is exactly that design and already at its
+  limit at three axes — whereas LHS decouples sample count from dimension.
 
 ## Client/browser verification (headless)
 
