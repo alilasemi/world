@@ -2,6 +2,42 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**POD study results (measured 2026-08-26 on the 150-rollout pilot; `surrogate/pod_study.py`,
+plot in `assets/screenshots/pod_spectrum.png`).** Linear POD is ADEQUATE for the mass channel and
+no autoencoder escalation is needed yet. Held-out relative L2 error on the settled mass field,
+basis fitted on 120 rollouts and tested on 30:
+
+| modes | mean-only (k=0) | k=5 | k=10 | k=20 | k=40 |
+|---|---|---|---|---|---|
+| mass | 0.871 | 0.516 | 0.381 | 0.243 | 0.192 |
+
+So ~20 modes take a 16384-node field to 24% error, versus 87% for predicting the ensemble mean --
+the basis is doing real work. 11 modes carry 90% of variance, 51 carry 99%.
+
+**The momentum channels look unlearnable and are not — that was a measurement artifact of asking at
+the wrong time.** At the final checkpoint, POD on momentum gives ~0.98 held-out error, i.e. no better
+than zero. The reason is that there is nothing left to predict: `RMS|rho*u| / RMS|rho|` falls from
+**2.29 at t=0.2 s to 0.018 at t=2.0 s** (a factor of ~120). The settled pile is at rest and its
+momentum field is residual numerical creep. Asked *while the material is moving*, momentum is as
+learnable as mass — held-out k=20 error at t=0.2 s is 0.35-0.40 for the momentum channels against
+0.34 for mass. Consequences:
+- **Stage 1 (theta -> settled outcome) should target the MASS channel only.** Fitting the settled
+  momentum field would produce a meaningless score for a quantity that is 1.8% of its initial
+  magnitude and is creep, not physics.
+- **Stage 2 (latent dynamics) needs the momentum channels, and they are informative exactly where
+  it needs them** -- the flight/impact window, t <~ 0.6 s.
+- This **empirically confirms the Markov argument** rather than merely asserting it: at t=0.2-0.4 s
+  momentum is ~2.3x the mass scale, so a density-only latent would omit the dominant part of the
+  state. By t=2 s the state genuinely *is* density alone, which is why the settled outcome is a pure
+  density field.
+
+*A hypothesis that was checked and rejected:* that the fields are nearly disjointly supported (which
+would force ~one mode per snapshot). Measured pairwise support overlap is 0.81 mean / 0.92 median and
+pairwise cosine similarity 0.35, so the fields overlap heavily. Slow spectrum decay here is shape
+variation, not disjoint support, and re-centring each field on its centroid barely helps
+(10-mode variance captured 0.832 -> 0.858). Translation is **not** the bottleneck, contrary to the
+Kolmogorov-barrier concern that motivated the study.
+
 **Contact model now includes Coulomb friction (added 2026-08-25).** `physics.friction` (mu,
 default 0.5) adds a tangential force capped at `mu * |F_normal|`, and the dashpot was narrowed to act
 on the **normal component of the relative velocity only** — previously it was applied to the full
@@ -339,6 +375,10 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
   throw/material parameters, written to `dataset/design.csv`. A tensor grid costs `k**d` and dies past
   d~4 — the existing `dt x max_force x restitution` sweep is exactly that design and already at its
   limit at three axes — whereas LHS decouples sample count from dimension.
+- `surrogate/pod_study.py` — per-channel POD/SVD study: spectrum, energy captured, held-out
+  reconstruction error vs rank, sample complexity (error vs number of training snapshots), and the
+  per-checkpoint breakdown that revealed the momentum-decay effect. `--per-checkpoint` is the flag
+  worth using; a single final-state number is misleading for momentum.
 - `surrogate/dataset_io.py` — reader for `dataset/grids.bin`. Exposes `mass()`, `momentum()`, and
   `velocity()` (which guards the empty-node 0/0 divide), plus an `ok` mask built from the manifest's
   `status` column.
