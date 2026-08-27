@@ -48,6 +48,43 @@ explicitly asks otherwise *in the moment* — a standing exception is never assu
 Do not add a `Co-Authored-By: Claude` trailer or any other Claude Code attribution to commits in this
 repo. Commit only when asked.
 
+## Current direction (as of 2026-08-25)
+
+The project is being repositioned from "a real-time fluid simulation and rendering engine" to **a
+GPU-native, real-time, interactive physics environment for embodied AI, plus a measurement of what is
+actually predictable inside it**. The strategy documents driving this live *outside* this repo in
+`~/job-search` (read-only reference: `real_time_particles_positioning.md` §3.0 is the live plan, and
+its `CLAUDE.md` holds the decision log). Read them before proposing direction changes.
+
+Decisions already argued through — do not re-litigate:
+- **No reinforcement learning.** A prior PPO stack was removed (recoverable from git history at
+  `52bd43b`…`0806084`). It is not coming back; a project that *ends* in an RL result invites
+  interview questions on the weakest axis.
+- **No automatic differentiation.** For chaotic, non-smooth granular contact the pathwise gradient
+  has variance growing like `e^{λT}`; statistical observables are the differentiable objects, and
+  zeroth-order estimation over parallel rollouts replaces AD.
+- **3D is deliberately in scope** (reversing an earlier deferral): hard convert, z up, gravity `-z`,
+  2D left in git history. Real time is the binding constraint, not particle count.
+  *Status: landed 2026-08-25 — all five drivers, the wire protocol, the test suite AND the
+  isometric renderer are 3D. Screenshots in `assets/screenshots/`.*
+- **The surrogate** predicts a coarse **density field** (trilinear/CIC deposit, i.e. MPM's
+  particle-to-grid transfer) from throw parameters, via POD + one Gaussian process per mode. If the
+  POD spectrum decays slowly, escalate to a convolutional autoencoder — *not* shifted POD, which
+  needs hand-designated reference frames and so doesn't generalize.
+- **One POD basis PER CHANNEL, not a single joint basis over all four** (decided 2026-08-25). The
+  latent has 4 channels (mass + momentum per axis, see `DensityGridKernel`), and a joint basis would
+  require scaling them against each other. That scaling is not merely awkward, it is *nonphysical*:
+  mass density is positive-definite while momentum density is signed, and momentum's dynamic range
+  is far wider and more scenario-dependent. Asking one set of modes to span two incommensurable
+  quantities makes the singular values meaningless — whichever channel is scaled larger dominates
+  the spectrum, and the "energy captured" number stops describing anything real. Four independent
+  bases also let each channel choose its own truncation rank, which mass (smooth, positive) and
+  momentum (signed, rougher) will not agree on.
+  *Marked as worth revisiting:* a joint basis is the only way to capture the physical coupling
+  between mass and momentum, which a latent dynamics model arguably needs. Reconsider once the
+  per-channel spectra are measured and there is evidence the coupling matters more than the
+  scaling problem hurts.
+
 **POD study results (measured 2026-08-26 on the 150-rollout pilot; `surrogate/pod_study.py`,
 plot in `assets/screenshots/pod_spectrum.png`).** Linear POD is ADEQUATE for the mass channel and
 no autoencoder escalation is needed yet. Held-out relative L2 error on the settled mass field,
