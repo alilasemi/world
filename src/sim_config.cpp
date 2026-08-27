@@ -134,6 +134,10 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
     } else if (section == "model_problem") {
         if (key == "sim_time") cfg.model_problem_sim_time = f();
         else warn_unknown(section, key);
+    } else if (section == "dataset") {
+        if (key == "sim_time") cfg.dataset_sim_time = f();
+        else if (key == "checkpoints") cfg.dataset_checkpoints = i();
+        else warn_unknown(section, key);
     } else if (section == "time_integration") {
         if (key == "solver") cfg.time_integrator = value;
         else if (key == "picard_iterations") cfg.picard_iterations = i();

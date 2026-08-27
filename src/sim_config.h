@@ -181,6 +181,14 @@ struct SimConfig {
     // Model problem driver (build/bin/model_problem)
     float model_problem_sim_time = 1.0f;  // seconds of simulated time to record and plot
 
+    // Dataset driver (build/bin/dataset): how long each rollout runs and how
+    // many density-grid snapshots to record along the way. Recording several
+    // snapshots rather than only the final one is what lets ONE dataset serve
+    // both the one-shot outcome surrogate (theta -> final field) and the
+    // autoregressive latent-dynamics model (field_t -> field_t+1).
+    float dataset_sim_time = 2.0f;
+    int dataset_checkpoints = 10;
+
     // Time integration
     std::string time_integrator = "semi_implicit_euler";  // "semi_implicit_euler" | "backward_euler_picard"
     int picard_iterations = 3;

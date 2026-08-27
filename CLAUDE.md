@@ -90,6 +90,7 @@ make debug        # same, with -g -DDEBUG
 make profile      # build build/bin/profile (no-network profiling binary, see src/profiling_sim.cpp)
 make stability    # build build/bin/stability_and_accuracy (dt sweep, see src/stability_and_accuracy.cpp)
 make model_problem   # build build/bin/model_problem (full-history single-run driver, see src/model_problem.cpp)
+make dataset      # build build/bin/dataset (surrogate training-set generator, see src/dataset.cpp)
 make test         # build and run build/bin/test (GoogleTest suite, see Testing below)
 make clean        # rm -rf build/
 make GPU_ARCH=sm_75   # override arch for cross-compiling / unusual setups
@@ -128,6 +129,69 @@ The client (`client/world.js`, `Client` class) mirrors this as a small state mac
 Either way, `UNSTABLE` vs. `STEADY`/`TIMED_OUT` is decided **once**, from `ParticleDynamics::is_stable()` on the final state after the loop above finishes — not by checking every intermediate step. A transient mid-run excursion outside `DomainParams` bounds that the penalty forces recover from by the end doesn't fail the combo; only where it actually lands at `t_max` (or wherever `steady_state` mode stopped early) does. One consequence: an already-diverged run isn't caught early by `is_stable()` anymore, so it burns through its remaining step budget like any other combo — for a badly diverged `dt`, this makes it more likely to hit `FindNeighborsKernel`'s collision-grid capacity (see "Collision grid" below), since the sim now keeps stepping well past the point it would previously have stopped. `run_child`'s local `check_grid_overflow()` polls `sim.grid_overflow_count()` at the same cadence as the `steady_state` accel check (plus once more after the loop, covering `fixed_time` mode) and, if it's ever nonzero, prints one line (`dt`, `max_force`, and the overflow count) and calls `exit(1)` — deliberately *not* checked every step, since a host sync that often would serialize what would otherwise be async-queued kernel launches and made an earlier version of this check dramatically slower.
 
 Because an overflowing combo now `exit(1)`s cleanly (see above) rather than the process getting `abort()`-ed by a device-side assert, each `(dt, max_force)` combo still runs in its own `fork()`+`execl()`-relaunched child process (the same binary re-invoked with `--dt <value> --max_force <value> --out <path> --config <path>`) so one crashing combo doesn't take down the rest of the sweep; the parent never touches CUDA itself (fork-after-CUDA-init is unsupported) and treats a non-zero/signaled child exit as `UNSTABLE` rather than reading the (possibly absent) output file. The parent prints the `dt`×`max_force` status grid to stdout live, one cell at a time as each combo's subprocess returns (with an `fflush` after each cell) rather than only at the end, so progress is visible on a slow sweep. After the sweep it also always writes `stability/stability_results.dat`/`stability_plot.gp`/`stability_plot.png` (the `stability/` dir is created if missing, regardless of which config file was actually passed in), invoking `gnuplot` via `system()` — a soft dependency: a nonzero exit just prints a warning, sweep results aren't lost. The plot is a grid of filled rectangles on an *index* grid (dt/max_force values aren't evenly spaced, so real-valued axes would distort cell sizes), red/green/yellow for unstable/steady/timed-out, with tics mapped back to the actual swept values. `stability/config.yaml` (the default config for this binary) is dedicated to this exploration (`stability_mode: steady_state`, a multi-value `max_force_sweep`); the repo-root `config.yaml` no longer carries a `stability:` section at all (only `stability/config.yaml` does) since it's for `world`/`profile`, not this driver.
+
+`src/dataset.cpp` (`build/bin/dataset`) is a fifth driver, and the one that generates the surrogate's
+training set. One rollout per row of a design CSV (`surrogate/make_design.py`), no WebSocket in the
+loop. Reads `dataset/blob_throw.yaml` and `dataset/design.csv` by default; writes
+`dataset/grids.bin` (self-describing: magic `RTPGRD01`, then shape header, checkpoint times, then
+`rollouts x checkpoints x channels x nx x ny x nz` float32) plus `dataset/manifest.csv` (theta per
+row, status, final time, overflow count, deposited mass). Read it from Python with
+`surrogate/dataset_io.py`, which validates the magic and shape rather than trusting them.
+
+Four things about this driver that are decisions, not accidents:
+- **Common random numbers.** Every rollout uses the same `init_seed`, so the base packing and jitter
+  pattern are identical across the design and the only thing varying is theta. Cheapest available
+  variance reduction for the downstream sensitivity estimates (see positioning doc §3.5).
+- **A diverged rollout does not kill the run.** Unlike `broadcast.cpp` and `stability_and_accuracy.cpp`
+  (which `exit(1)` on grid overflow), this one flags the row in the manifest, zero-fills its grids, and
+  continues — losing an entire design hours in to one bad parameter combination would be far worse. The
+  `status` column is therefore load-bearing: **always filter on it**, never assume every row is usable.
+- **Blob mass is varied through per-grain mass, not grain count**, so `n` is fixed across the whole
+  design. A varying `n` would change the state size and the latent's normalization row to row.
+- **Release x/y are fixed at the domain center, not swept.** Sampling them would translate the whole
+  outcome field rigidly, which carries no physics and is the worst possible case for a linear POD
+  basis. Release *velocity* also moves the outcome but couples that motion to real physics (spread
+  grows with speed), so it stays.
+- **Checkpoints, not just the final state.** Recording the latent at ~10 times per rollout is what lets
+  ONE dataset serve both the one-shot surrogate (`theta -> final field`) and the autoregressive latent
+  dynamics model (`field_t -> field_{t+1}`).
+
+**Two dataset configs, and the second exists for a measured reason.**
+`dataset/blob_throw.yaml` (10 snapshots over 2 s) is the Stage-1 terminal-state set;
+`dataset/blob_dynamics.yaml` (20 snapshots over 1 s, i.e. `Delta = 0.05` s) is the Stage-2 set.
+Identical physics -- only the sampling in time differs. The reason is that the assembly comes to rest
+by ~0.6 s: the momentum/mass ratio falls 2.29 -> 0.06 over the first six snapshots of the Stage-1 set
+and is negligible after. Consecutive pairs drawn from it would be dominated by transitions in which
+*nothing moves*, and a dynamics model trained on those learns the identity map. Output directory is
+the dataset driver's third argument so both sets coexist (`dataset/`, `dataset_dynamics/`).
+
+**Stage 2 design decisions** (`surrogate/fit_dynamics.py`):
+- **All four channels are carried**, unlike Stage 1. Mass alone is not a Markov state; the momentum
+  channels are exactly what the transient needs, and the POD study showed they are informative for
+  `t <~ 0.6` s.
+- **The action parameters are withheld from the model** -- only the three material parameters are
+  supplied. The launch velocity has already done its work by the first recorded snapshot and is
+  carried in the momentum channels; feeding it in as well would let the model bypass the latent and
+  make "is the latent a sufficient state?" untestable.
+- **The train/test split is by ROLLOUT, never by transition.** Consecutive transitions from one
+  rollout are strongly correlated, so splitting transitions at random leaks a test rollout's own
+  trajectory into training and makes the rollout error meaningless. This is the easiest way to get a
+  flatteringly wrong answer here.
+- **Three baselines are reported**, because an autoregressive model has to earn its complexity:
+  persistence (`a(t+Delta) = a(t)`), one-step-from-truth (isolates error accumulation from one-step
+  accuracy), and **direct** `theta -> a(t)` refitted per horizon. The last is the honest competitor:
+  if predicting the state directly from `theta` beats stepping to it, the dynamics model is worthless.
+
+**`dataset/blob_throw.yaml` runs at `dt=1e-4`, ten times finer than the interactive demo, and that is
+required, not cautious.** The contact period is `2*pi*sqrt(m_reduced/k)` with `k = max_force/radius`;
+for the grain masses swept here that is 1.4-4.4 ms, so `dt=1e-3` gives only **1.4-4.4 steps per
+contact** and rollouts explode. Measured before the fix: 5 of 8 rollouts diverged, every one at the
+*first* checkpoint with **zero** grid-overflow cells — i.e. numerical blow-up, not grains escaping
+geometrically. That distinction is what identified the cause; the overflow counter being zero ruled
+out the collision grid entirely. At `dt=1e-4` the same masses get 14-44 steps per contact and 8 of 8
+survive. The blob is small (3375 grains, ~2 s per rollout) so the 10x step cost is irrelevant for data
+generation, where wall-clock per rollout matters far less than in the real-time demo. **General rule
+for this codebase: want >= 20 steps per contact period; below ~5 is hopeless.**
 
 `src/model_problem.cpp` (`build/bin/model_problem`) is a fourth driver, for granular debugging rather than pass/fail sweeping: for every `(dt, max_force, restitution)` combo in the same shared `sweep:` section as `stability_and_accuracy` (`config.sweep_dt` × `config.sweep_max_force`) plus a third axis unique to this driver, `config.sweep_restitution` (`sweep.restitution` in YAML, overriding `config.physics.restitution` per combo) — any axis left unset in the config degenerates to a single value at the config's own `simulation.dt`/`physics.max_force`/`physics.restitution`, so an unswept config is exactly the original single-run behavior — it records **every single step's** full state (`sim.host_state` — `x/y/vx/vy` per particle, not just position), unlike `stability_and_accuracy`'s pass/fail-only verdict. It calls `sim.unpack_state()` (a full device→host sync) after every `take_step()` with no batching or infrequent-polling trick — the opposite tradeoff from `stability_and_accuracy`/`broadcast.cpp`'s overflow checks, but fine here since model problems are small and short by design. All combos land in one `model_problems/history.dat`: a header row (`# step time x0 y0 vx0 vy0 ...`), then each combo as its own block (`# combo N: dt=... max_force=... restitution=...` followed by its rows), blocks separated by **two** blank lines — gnuplot's actual dataset-`index` separator (a single blank line only marks a within-index discontinuity; verified directly against gnuplot 6.0, since getting this wrong silently drops every combo past the first with a "no valid points" warning). The generated `model_problems/trajectory_plot.gp` (same `gnuplot`-`system()` idiom as `stability_and_accuracy`) plots each combo's `index i` as its own colored, legended line of time vs. particle 0's y-position (`kPalette` in model_problem.cpp — first color is always purple, so a single-combo run looks identical to before this supported sweeping), plus a red dashed reference line at `y = floor_y + particle_radius`. A combo whose grid overflows just warns and keeps its (diverged) data — unlike `broadcast.cpp`/`stability_and_accuracy.cpp`, there's no subprocess isolation here, so `exit(1)`ing would also kill every other combo in the sweep. Defaults to `model_problems/single_particle.yaml` — a single particle released from rest at the domain center under gravity, using the new `init_type: single_particle` (`ParticleDynamics::initialize_to_single_particle()`, alongside `"cube"`/`"two_particles"`; also takes `init_vx0`/`init_vy0`, unlike the always-at-rest `"two_particles"`/`"cube"`). `model_problems/first_collision.yaml` sweeps dt × max_force for a single high-speed floor impact (gravity off, particle released 3 radii up with `vy0=-10`) to see how timestep resolution and contact stiffness change the shape of one collision.
 

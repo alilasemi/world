@@ -1,0 +1,84 @@
+# Base configuration for the thrown-blob dataset (build/bin/dataset).
+#
+# The design CSV overrides the swept parameters per rollout (throw velocity,
+# release height, grain mass, restitution, friction); everything here is what
+# stays FIXED across the whole design. Release x/y are deliberately fixed at the
+# domain center rather than swept -- sampling them would translate the outcome
+# field rigidly, which carries no physics and is the worst case for a linear POD
+# basis (see CLAUDE.md).
+
+simulation:
+  # dt=1e-4, not the 1e-3 the interactive demo uses. The contact period is
+  # 2*pi*sqrt(m_reduced/k) with k = max_force/radius, which for the grain masses
+  # swept here is 1.4-4.4 ms -- so dt=1e-3 gives only 1.4-4.4 steps per contact
+  # and rollouts blow up (measured: 5 of 8 diverged, all at the first checkpoint,
+  # with zero grid overflow, i.e. numerical explosion rather than grains
+  # escaping). At dt=1e-4 the same masses get 14-44 steps per contact. The blob
+  # is small enough (3375 grains) that the 10x extra steps are affordable for
+  # data generation, where wall-clock per rollout matters far less than in the
+  # real-time demo.
+  dt: 0.0001
+  # ~1 particle diameter per cell over the 2.0-wide domain.
+  collision_grid_size_x: 100
+  collision_grid_size_y: 100
+  collision_grid_size_z: 70   # 1.4 tall / 0.02 diameter
+  particles_per_cell: 8
+  threads_per_block: 256
+  # The latent. Coarse on purpose: few outputs for the surrogate, many grains
+  # averaged per node.
+  density_grid_size_x: 32
+  density_grid_size_y: 32
+  # Anisotropic on purpose: the outcome is a thin layer, so x/y carry the
+  # information and z needs far fewer nodes once the domain is short.
+  density_grid_size_z: 16
+
+# The z extent is deliberately SHORT. Measured on the first pilot: 99% of the
+# settled mass sits in ~3 of 32 z-nodes, i.e. 90% of the latent's vertical
+# resolution was spent on empty air. Coarsening the node count alone would not
+# fix that -- it would just put the whole pile inside one node and destroy the
+# vertical profile entirely. Shortening the domain is what makes a coarse z
+# grid informative: the grains never approach z=1, so nothing is lost.
+domain:
+  x_min: -1.0
+  x_max:  1.0
+  y_min: -1.0
+  y_max:  1.0
+  z_min: -1.0
+  z_max:  0.4
+
+physics:
+  gravity: 9.81
+  particle_radius: 0.01
+  max_force: 2000.0
+  floor_z:    -1.0
+  ceiling_z:   0.4
+  wall_x_min: -1.0
+  wall_x_max:  1.0
+  wall_y_min: -1.0
+  wall_y_max:  1.0
+  # Overridden per rollout by the design.
+  restitution: 0.3
+  friction: 0.5
+
+materials:
+  # masses[1] (sand) is overridden per rollout by the design's grain_mass column.
+  masses: [0.0, 0.08]
+
+initialization:
+  # A jittered lattice of sand grains, each given the throw velocity.
+  type: cube
+  x0: -0.15                  # centered: the blob spans -0.15..0.15
+  y0: -0.15
+  z0: 0.0                    # overridden per rollout by release_z
+  # 0.3 at radius 0.01 -> 15^3 = 3375 grains. Small enough that a few hundred
+  # rollouts is affordable, large enough that the coarse latent is meaningful.
+  cube_length_x: 0.3
+  cube_length_y: 0.3
+  cube_length_z: 0.3
+  jitter: 0.25
+  seed: 12345                # SAME for every rollout: common random numbers
+  particle_material: 1
+
+dataset:
+  sim_time: 2.0
+  checkpoints: 10
