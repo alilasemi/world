@@ -122,6 +122,72 @@ above the floor, so both need work, and the priority is now measured rather than
 Nothing here suggests a nonlinear encoder is needed: the linear basis reaches 0.19 at K=40 against a
 0.168 floor, so the subspace is nearly adequate and the autoencoder escalation stays unnecessary.
 
+**Stage 2 -- latent dynamics, `(a(t), theta_material) -> a(t+Delta)` rolled out autoregressively**
+(`surrogate/fit_dynamics.py`, figure `assets/screenshots/stage2_dynamics_v2.png`). Final
+configuration: `dataset_dyn2` (1536 rollouts x 10 checkpoints, `Delta = 0.10` s), mass rank 96 +
+momentum rank 24 per axis (latent 168, input 171), 900 training transitions, isotropic Matern.
+
+| at t = 1.0 s | first attempt | final |
+|---|---|---|
+| reconstruction floor (cost of the latent alone) | 0.173 | **0.108** |
+| one step from truth | 0.177 | 0.109 |
+| **autoregressive rollout** | **0.445** | **0.174** |
+| persistence baseline | 1.762 | 1.531 |
+| compounding penalty | 0.268 | **0.065** |
+| irreducible floor for that config | 0.168 | **0.154** |
+| rollout / floor | 2.65x | **1.13x** |
+
+**Always decompose rollout error into three separately measurable terms; which one dominates changes
+the answer to "what should I fix" completely.**
+- *truncation* -- encode the truth and decode it. Independent of the regressor.
+- *one-step regression* -- teacher-forced error minus the truncation floor.
+- *compounding* -- rollout error minus teacher-forced error.
+
+At rank 16 the budget was truncation 0.401 / regression 0.000 / compounding 0.063, so truncation was
+86% of the error and **more data would have done nothing** -- teacher-forced error equalled the
+reconstruction floor *to four decimal places*. Raising the rank to 96 fixed truncation and flipped the
+budget to compounding-dominated (0.173 / 0.004 / 0.268). Only then did the fixes below apply.
+
+**What fixed compounding**, in order of effect:
+1. **Doubling `Delta`** (0.05 -> 0.10 s) halved the compounding events, 19 -> 9. Dominant.
+2. **Narrowing the theta ranges ~40% per axis** improved *both* terms: the same 900-point GP subset
+   covers a smaller domain more densely (one-step latent error 0.128 -> 0.102 despite a longer, harder
+   step), and less state diversity means rank 96 retains 99.74% rather than 99.43%, dropping the
+   reconstruction floor 0.173 -> 0.108.
+3. **More rollouts** (256 -> 1536) bought a better basis (14,160 training snapshots) and a
+   well-covering subset drawn from 12,744 available transitions.
+
+**An exact GP cannot consume a large database**: O(n^3) per likelihood evaluation makes anything past
+~1000-1500 training points prohibitive. What a bigger database buys is a better POD basis and a
+denser-covering *subset*. Reducing per-step error at fixed n therefore means shrinking the domain n
+must cover -- which is why the theta narrowing was the effective lever, not the row count.
+
+**Cost, measured:** 21 min to generate 1536 rollouts; 561 s to fit 168 GPs at n=900; ~9.4 min for
+basis + fit + evaluation.
+
+**Two honest caveats.** The accuracy was bought with generality: the theta box is ~40% narrower per
+axis, i.e. ~7% of the original volume in 7 dimensions, so 0.174 must never be quoted without stating
+the domain. And the remaining compounding (0.065) is now comparable to the gap to the floor; reducing
+it needs a multi-step (rollout-objective) loss, which scikit-learn's GP cannot express.
+
+The error *peaks* at t ~ 0.3-0.4 s and then falls -- the impact and spreading phase is genuinely the
+hardest part of the trajectory, after which the pile settles and prediction gets easier. A physics
+signature, not a model artifact.
+
+**The floor is configuration-specific and must be re-measured, never reused.** The 0.168 figure came
+from the wide-theta config at t = 2.0 s and is *invalid* for the narrowed config at t = 1.0 s, where
+the correct value is 0.154 (pairwise 0.225, ratio 1.463 against sqrt(2) = 1.414). `fit_dynamics.py`
+takes `--floor` as an argument rather than hardcoding it: reusing the stale value flattered the result
+from 1.13x to 1.04x.
+
+**On the direct competitor.** A `theta -> a(t)` regression refit per horizon (Stage 1 applied at every
+time) *beat* the rollout in the first dynamics study. That is expected, not a defect: with a single
+action at t=0, theta is a complete description of the trajectory, so `a(t)` adds no information and the
+rollout can only lose some through truncation while accumulating its own error. A dynamics model earns
+its place when theta is unknown (state observed rather than parameterized), when the horizon exceeds
+the training range, or when **actions arrive mid-trajectory** -- where no single theta exists and the
+direct regression is not definable. `--skip-direct` omits it for that reason.
+
 *A hypothesis that was checked and rejected:* that the fields are nearly disjointly supported (which
 would force ~one mode per snapshot). Measured pairwise support overlap is 0.81 mean / 0.92 median and
 pairwise cosine similarity 0.35, so the fields overlap heavily. Slow spectrum decay here is shape
@@ -469,6 +535,8 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
 - `surrogate/fit_surrogate.py` — Stage 1: fits the GPs, reports the truncation/regression error
   decomposition, per-mode R^2, uncertainty calibration and ARD sensitivity, and writes the
   imagination-vs-truth figure.
+- `surrogate/fit_dynamics.py` — Stage 2: the latent dynamics model
+  `(a(t), theta_material) -> a(t+Delta)`, rolled out autoregressively, against three baselines.
 - `surrogate/plot_chaos.py` — the predictability figure (per-grain divergence vs field divergence,
   with the surrogate error and the measured floor marked).
 - `surrogate/pod_study.py` — per-channel POD/SVD study: spectrum, energy captured, held-out
