@@ -627,6 +627,9 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
   throw/material parameters, written to `dataset/design.csv`. A tensor grid costs `k**d` and dies past
   d~4 — the existing `dt x max_force x restitution` sweep is exactly that design and already at its
   limit at three axes — whereas LHS decouples sample count from dimension.
+- `surrogate/formulation.tex` — self-contained formal statement of the encoder, POD/SVD reduction and
+  GP regression, with every symbol and dimension defined. Build with `pdflatex formulation.tex` (twice,
+  for references). Read this before modifying the surrogate; it is the specification.
 - `surrogate/fit_surrogate.py` — Stage 1: fits the GPs, reports the truncation/regression error
   decomposition, per-mode R^2, uncertainty calibration and ARD sensitivity, and writes the
   imagination-vs-truth figure.

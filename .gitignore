@@ -22,6 +22,12 @@ __pycache__/
 dataset/*.bin
 dataset/*.csv
 
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+
 # Fitted surrogate artifacts (large; regenerate with fit_dynamics.py --save)
 surrogate/*.joblib
 decoded/

@@ -1,0 +1,921 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\bs}[1]{\boldsymbol{#1}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+
+\title{An outcome surrogate for granular interactions:\\
+proper orthogonal decomposition with Gaussian process regression}
+\author{}
+\date{26 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe the construction of a parametric surrogate for the outcome of a granular
+interaction computed by a three-dimensional particle dynamics simulation. The particle state
+is interpolated onto a coarse Eulerian grid, the resulting field ensemble is reduced by
+proper orthogonal decomposition (POD), and the map from interaction parameters to modal
+coefficients is regressed by Gaussian process (GP) regression. The purpose of the document
+is to fix notation and dimensions; measured results from a pilot ensemble are reported in
+Section~\ref{sec:measured}.
+\end{abstract}
+
+\section{Problem statement and notation}
+\label{sec:notation}
+
+Let $d = 3$ denote the spatial dimension and $\Omega \subset \R^{d}$ the simulation domain,
+a rectangular box. The full-order model (FOM) advances $n_p$ particles subject to gravity,
+contact forces and boundary contacts. Particle $i \in \{1, \ldots, n_p\}$ carries a position
+$\bs{x}_i \in \R^{d}$, a velocity $\bs{v}_i \in \R^{d}$ and a mass $m_i > 0$. Nothing below
+depends on the particular force law, and the formulation applies unchanged if the FOM is
+later extended with rigid bodies or continuum fields.
+
+The state is stored with the degrees of freedom of each particle contiguous, position
+followed by velocity:
+\begin{equation}
+  \bs{q}(t) \in \R^{n_q}, \quad n_q = 2 d n_p,
+  \qquad
+  \bs{q} = \big[\, \bs{x}_1, \bs{v}_1, \; \bs{x}_2, \bs{v}_2, \; \ldots, \;
+  \bs{x}_{n_p}, \bs{v}_{n_p} \,\big],
+  \label{eq:state}
+\end{equation}
+so that, with components indexed from $1$,
+\begin{equation}
+  q_{2d(i-1) + j} = (\bs{x}_i)_j, \qquad
+  q_{2d(i-1) + d + j} = (\bs{v}_i)_j, \qquad j = 1, \ldots, d .
+  \label{eq:state-index}
+\end{equation}
+For $d = 3$ the stride between consecutive particles is $2d = 6$. This is the layout used by
+the implementation; it is recorded here because every index expression in
+Section~\ref{sec:encoder} inherits it. For the ensemble reported below $n_p = 3375$, hence
+$n_q = 20\,250$.
+
+Each realization of the FOM is determined by a parameter vector
+\begin{equation}
+  \bs{\theta} \in \mathcal{P} \subset \R^{p}, \qquad p = 7,
+  \label{eq:theta}
+\end{equation}
+where $\mathcal{P}$ is a product of intervals. The components of $\bs{\theta}$ are the
+$d = 3$ components of the initial velocity applied to every particle, the release height,
+the per-particle mass, the coefficient of restitution $e \in [0,1]$, and the Coulomb
+friction coefficient $\mu \geq 0$. The first four are \emph{actions}, in the sense that an
+agent acting in the environment would select them; the last three are \emph{material}
+parameters, which system identification would instead infer from observation.
+
+We seek a surrogate for a coarse-grained functional of the terminal state, not for
+$\bs{q}$ itself. This is deliberate: $\bs{q}$ is chaotic, whereas coarse-grained
+functionals of a granular assembly are reproducible.
+
+\section{Interpolation onto the grid}
+\label{sec:encoder}
+
+Let the grid have $N_j$ nodes along axis $j$, covering $\Omega$ inclusively, so the spacing
+is $h_j = (\Omega_j^{\max} - \Omega_j^{\min})/(N_j - 1)$. Nodes are labelled by a single
+index
+\begin{equation}
+  \alpha \in \{1, \ldots, N\}, \qquad N = N_1 N_2 N_3 ,
+  \label{eq:node-index}
+\end{equation}
+obtained from the triple $(\alpha_1, \alpha_2, \alpha_3)$ of per-axis indices by
+$\alpha = (\alpha_1 - 1) N_2 N_3 + (\alpha_2 - 1) N_3 + \alpha_3$. Presently
+$(N_1, N_2, N_3) = (32, 32, 16)$ and $N = 16\,384$. Let $\bs{y}_\alpha \in \R^{d}$ denote
+the position of node $\alpha$.
+
+Define $n_c = 1 + d = 4$ \emph{channels}: the mass density and the $d$ components of the
+momentum density. Particle quantities are interpolated onto the grid with the product of
+one-dimensional hat functions,
+\begin{equation}
+  w_{i\alpha} = \prod_{j=1}^{d} \max\!\left( 0, \; 1 -
+  \frac{\left| (\bs{x}_i)_j - (\bs{y}_\alpha)_j \right|}{h_j} \right) \; \geq 0 ,
+  \label{eq:weights}
+\end{equation}
+which are nonzero on the $2^d = 8$ nodes surrounding $\bs{x}_i$ and form a partition of
+unity,
+\begin{equation}
+  \sum_{\alpha=1}^{N} w_{i\alpha} = 1 \qquad \text{for every } i .
+  \label{eq:partition}
+\end{equation}
+The interpolation is then
+\begin{equation}
+  \rho_\alpha = \sum_{i=1}^{n_p} m_i w_{i\alpha},
+  \qquad
+  (\rho u_j)_\alpha = \sum_{i=1}^{n_p} m_i (\bs{v}_i)_j \, w_{i\alpha},
+  \qquad j = 1, \ldots, d,
+  \label{eq:deposit}
+\end{equation}
+and \eqref{eq:partition} gives exact conservation of mass,
+\begin{equation}
+  \sum_{\alpha=1}^{N} \rho_\alpha
+  = \sum_{i=1}^{n_p} m_i \sum_{\alpha=1}^{N} w_{i\alpha}
+  = \sum_{i=1}^{n_p} m_i .
+  \label{eq:conservation}
+\end{equation}
+Assigning each particle wholly to its nearest node also satisfies \eqref{eq:conservation}
+but is discontinuous in $\bs{x}_i$; the weights \eqref{eq:weights} are continuous, which is
+required for the ensemble of Section~\ref{sec:pod} to depend continuously on
+$\bs{\theta}$.
+
+Write $\bs{s}_c \in \R^{N}$ for the field of channel $c \in \{1, \ldots, n_c\}$, with
+$c = 1$ the mass channel and $c = 1 + j$ the $j$th momentum component, and
+$\bs{s} \in \R^{n_c N}$ for their concatenation, $\dim \bs{s} = 65\,536$. The map
+$\bs{q} \mapsto \bs{s}$ defined by \eqref{eq:deposit} is denoted
+$\mathcal{E} : \R^{n_q} \to \R^{n_c N}$.
+
+The momentum channels are retained because $\bs{s}_1$ alone is not a Markov state: two
+assemblies with identical mass fields and different velocity fields evolve differently.
+They are, however, informative only while the material is in motion; see
+Section~\ref{sec:measured}.
+
+\section{Reduction: proper orthogonal decomposition}
+\label{sec:pod}
+
+\subsection{Snapshot ensemble}
+
+Let $\{\bs{\theta}^{(m)}\}_{m=1}^{M}$ be a design of experiments in $\mathcal{P}$, obtained
+here by a scrambled Sobol sequence, a quasi-Monte Carlo (QMC) construction whose marginal
+projections are uniform by construction. For each $m$ the FOM is advanced to a terminal time
+$T$ and interpolated by \eqref{eq:deposit}, giving snapshots $\bs{s}_c^{(m)} \in \R^{N}$.
+
+For each channel $c$ independently, collect the $M$ snapshots as the rows of
+\begin{equation}
+  X_c \in \R^{M \times N},
+  \qquad
+  \left( X_c \right)_{m\alpha} = \left( \bs{s}_c^{(m)} \right)_{\!\alpha} ,
+  \label{eq:snapshot-matrix}
+\end{equation}
+that is, entry $(m, \alpha)$ of $X_c$ is the value of channel $c$ at grid node $\alpha$
+in realization $m$: the row index runs over realizations, the column index over grid nodes.
+Subtract the ensemble mean field from every row,
+\begin{equation}
+  \tilde{X}_c = X_c - \bs{1}_M \bar{\bs{s}}_c^{\,\top},
+  \qquad
+  \bar{\bs{s}}_c = \frac{1}{M} \sum_{m=1}^{M} \bs{s}_c^{(m)} \in \R^{N},
+  \label{eq:centering}
+\end{equation}
+with $\bs{1}_M \in \R^{M}$ the vector of ones, so that $\bs{1}_M \bar{\bs{s}}_c^{\,\top}
+\in \R^{M \times N}$ repeats $\bar{\bs{s}}_c^{\,\top}$ in each of its $M$ rows.
+
+A separate basis is constructed for each channel. A single basis spanning all $n_c$ channels
+jointly would require a relative scaling between mass density and momentum density. Such a
+scaling is not physically determined: $\rho \geq 0$ whereas $\rho u_j$ is sign-indefinite,
+and the two have different units and substantially different dynamic ranges. Under any fixed
+scaling the channel assigned the larger magnitude dominates the singular spectrum, and the
+fraction of captured variance ceases to be a meaningful diagnostic. Independent bases
+additionally permit channel-dependent truncation ranks.
+
+\subsection{Singular value decomposition}
+
+The singular value decomposition (SVD) of the centered snapshot matrix is
+\begin{equation}
+  \tilde{X}_c = U_c \Sigma_c V_c^{\top},
+  \qquad
+  U_c \in \R^{M \times r_c}, \quad
+  \Sigma_c \in \R^{r_c \times r_c}, \quad
+  V_c \in \R^{N \times r_c},
+  \label{eq:svd}
+\end{equation}
+with $U_c^{\top} U_c = V_c^{\top} V_c = I_{r_c}$, $\Sigma_c = \mathrm{diag}(\sigma_{c,1},
+\ldots, \sigma_{c,r_c})$, $\sigma_{c,1} \geq \cdots \geq \sigma_{c,r_c} > 0$, and
+$r_c = \mathrm{rank}\,\tilde{X}_c \leq \min(M-1, N)$. The bound $M-1$ rather than $M$ follows
+from \eqref{eq:centering}, which removes one degree of freedom from the row space. For the
+present ensemble $M = 150 \ll N$, so $r_c \leq 149$ and the SVD is computed in economy form
+at cost $O(M^2 N)$.
+
+The columns $\bs{\phi}_{c,k} \in \R^{N}$ of $V_c$ are the POD modes of channel $c$:
+orthonormal spatial fields on the grid. Retaining the leading $K_c \leq r_c$ modes defines
+\begin{equation}
+  \Phi_c = \left[ \bs{\phi}_{c,1}, \ldots, \bs{\phi}_{c,K_c} \right] \in \R^{N \times K_c},
+  \qquad \Phi_c^{\top} \Phi_c = I_{K_c},
+  \label{eq:basis}
+\end{equation}
+and the modal coefficients of a snapshot follow by orthogonal projection,
+\begin{equation}
+  \bs{a}_c^{(m)} = \Phi_c^{\top} \left( \bs{s}_c^{(m)} - \bar{\bs{s}}_c \right)
+  \in \R^{K_c},
+  \qquad
+  \bs{s}_c^{(m)} \approx \bar{\bs{s}}_c + \Phi_c \bs{a}_c^{(m)} .
+  \label{eq:projection}
+\end{equation}
+The truncation rank $K_c$ is chosen per channel; it is not assumed equal across $c$.
+
+Two properties motivate this basis. First, by the Eckart--Young theorem the truncation
+\eqref{eq:basis} is optimal: among all rank-$K_c$ matrices,
+\begin{equation}
+  \min_{\mathrm{rank}\,Y \leq K_c} \norm{\tilde{X}_c - Y}_F^2
+  = \sum_{k = K_c+1}^{r_c} \sigma_{c,k}^2 ,
+  \label{eq:eckart-young}
+\end{equation}
+where $\norm{\cdot}_F$ is the Frobenius norm. No other $K_c$-dimensional linear subspace
+represents the ensemble with smaller squared error. Second, \eqref{eq:eckart-young} makes the
+truncation error available from the spectrum alone, before any regression is attempted.
+
+\subsection{Retained variance, and the term ``energy''}
+\label{sec:energy}
+
+Because
+\begin{equation}
+  \norm{\tilde{X}_c}_F^2
+  = \sum_{k=1}^{r_c} \sigma_{c,k}^2
+  = \sum_{m=1}^{M} \norm{ \bs{s}_c^{(m)} - \bar{\bs{s}}_c }_2^2 ,
+  \label{eq:frobenius-identity}
+\end{equation}
+the natural truncation diagnostic is the fraction of that total carried by the retained
+modes,
+\begin{equation}
+  \eta_c(K) = \frac{\sum_{k=1}^{K} \sigma_{c,k}^2}{\sum_{k=1}^{r_c} \sigma_{c,k}^2}
+  \; = \; 1 - \frac{\min_{\mathrm{rank}\,Y \leq K} \norm{\tilde{X}_c - Y}_F^2}
+  {\norm{\tilde{X}_c}_F^2} \; \in [0, 1] .
+  \label{eq:energy}
+\end{equation}
+By \eqref{eq:frobenius-identity} the denominator is $(M-1)$ times the sample variance of the
+field summed over all $N$ nodes, so $\eta_c$ is exactly the \emph{fraction of ensemble
+variance retained}.
+
+The quantity commonly reported as ``retained energy'', and quoted as a percentage, is the
+same $\eta_c(K)$ of \eqref{eq:energy}; the two names refer to one quantity and there is no
+separate formula. The name is literal only in the setting where POD was first popularized,
+in which the snapshots are velocity fields: then $\sum_k \sigma_k^2$ is proportional to the
+total fluctuating kinetic energy of the ensemble, and truncation discards a definite amount
+of it. For a mass-density channel no energy is involved and the term is an analogy resting
+only on $\eta_c$ being a normalized sum of squares. We therefore report $\eta_c$ as retained
+variance, and note the synonym once, here.
+
+$\eta_c$ is a statement about the ensemble used to build the basis. It is not a
+generalization estimate, and Section~\ref{sec:errors} does not use it as one.
+
+\subsection{Error measures}
+\label{sec:errors}
+
+All errors are measured between fields on the grid, in $\R^{N}$: the reference is the
+interpolated field $\bs{s}_c^{(m)}$ of \eqref{eq:deposit}, not the particle state
+$\bs{q}$. This is by construction rather than by convenience. The grid field is the declared
+quantity of interest, so the information discarded by $\mathcal{E}$ is part of the problem
+statement and not an error to be charged against the reduction or the regression. A metric
+comparing predictions against $\bs{q}$ would instead measure the coarse-graining, which is a
+modeling choice made in Section~\ref{sec:notation}.
+
+Let $\mathcal{T}$ be a set of realizations held out from the construction of
+$\bar{\bs{s}}_c$, of $\Phi_c$, and of the regressor of Section~\ref{sec:gp}. Two errors are
+reported separately. The first replaces the true coefficients into
+\eqref{eq:projection} and so isolates the truncation:
+\begin{equation}
+  \varepsilon^{\text{proj}}_c(K_c) = \left(
+  \frac{\sum_{m \in \mathcal{T}} \norm{
+    \big[ \bar{\bs{s}}_c + \Phi_c \Phi_c^{\top}
+    ( \bs{s}_c^{(m)} - \bar{\bs{s}}_c ) \big] - \bs{s}_c^{(m)} }_2^2 }{
+  \sum_{m \in \mathcal{T}} \norm{ \bs{s}_c^{(m)} }_2^2 } \right)^{1/2} ,
+  \label{eq:error-proj}
+\end{equation}
+in which the bracketed term is the orthogonal projection of the true field onto the affine
+subspace $\bar{\bs{s}}_c + \mathrm{range}\,\Phi_c$. The second uses the regressed
+coefficients $\bs{m}_c(\bs{\theta}^{(m)})$ of \eqref{eq:gp-mean} and so measures the
+deployed surrogate:
+\begin{equation}
+  \varepsilon^{\text{sur}}_c(K_c) = \left(
+  \frac{\sum_{m \in \mathcal{T}} \norm{
+    \big[ \bar{\bs{s}}_c + \Phi_c \bs{m}_c(\bs{\theta}^{(m)}) \big]
+    - \bs{s}_c^{(m)} }_2^2 }{
+  \sum_{m \in \mathcal{T}} \norm{ \bs{s}_c^{(m)} }_2^2 } \right)^{1/2}
+  \; \geq \; \varepsilon^{\text{proj}}_c(K_c) ,
+  \label{eq:error-sur}
+\end{equation}
+the inequality holding because the projection is the minimizer over coefficients. The gap
+between \eqref{eq:error-proj} and \eqref{eq:error-sur} is attributable to the regression
+alone, so the two remedies -- enlarging $K_c$ and improving the regressor -- can be
+prioritized from measurement rather than assumption.
+
+Three choices in \eqref{eq:error-proj}--\eqref{eq:error-sur} are deliberate. The norms are
+taken on the \emph{uncentered} field, because that is what the surrogate must produce;
+reporting the error of $\bs{s}_c - \bar{\bs{s}}_c$ instead would credit the method with the
+mean field, which is free. The ratio is formed once over the whole of $\mathcal{T}$ rather
+than by averaging per-realization ratios, so that realizations of small total mass, whose
+individual ratios are ill-conditioned, do not dominate. And $\mathcal{T}$ is excluded from
+$\bar{\bs{s}}_c$ and $\Phi_c$: computing either from all $M$ realizations leaks the test set
+into the basis and understates \eqref{eq:error-proj}.
+
+\section{Regression: Gaussian process on modal coefficients}
+\label{sec:gp}
+
+Composing \eqref{eq:projection} with the parameter-to-state map reduces the task to the
+regression of $K_c$ scalar functions of $\bs{\theta}$,
+\begin{equation}
+  f_{c,k} : \mathcal{P} \subset \R^{p} \to \R,
+  \qquad
+  f_{c,k}\big(\bs{\theta}^{(m)}\big) = \big( \bs{a}_c^{(m)} \big)_k,
+  \qquad k = 1, \ldots, K_c .
+  \label{eq:regression-task}
+\end{equation}
+Each $f_{c,k}$ is modeled as an independent GP: a prior over functions under which any
+finite collection of function values is jointly Gaussian, specified by a mean function, taken
+zero after centering, and a covariance (kernel) function $\kappa : \mathcal{P} \times
+\mathcal{P} \to \R$.
+
+We adopt the Mat\'ern kernel with smoothness parameter $\nu = 5/2$ and automatic relevance
+determination (ARD), that is, one length scale per input,
+\begin{equation}
+  \kappa(\bs{\theta}, \bs{\theta}') = \sigma_f^2
+  \left( 1 + \sqrt{5}\, \tau + \tfrac{5}{3} \tau^2 \right) e^{-\sqrt{5}\,\tau},
+  \qquad
+  \tau = \left( \sum_{i=1}^{p} \frac{(\theta_i - \theta_i')^2}{\ell_i^2} \right)^{1/2},
+  \label{eq:matern}
+\end{equation}
+with signal variance $\sigma_f^2 > 0$ and length scales $\ell_i > 0$. Sample paths of
+\eqref{eq:matern} are twice differentiable, a weaker and, for a system with contact, more
+defensible assumption than the analyticity implied by a squared-exponential kernel.
+Observations are modeled as $y^{(m)} = f_{c,k}(\bs{\theta}^{(m)}) + \epsilon^{(m)}$ with
+$\epsilon^{(m)} \sim \mathcal{N}(0, \sigma_n^2)$ independent. Here $\sigma_n^2$ absorbs the
+irreducible scatter of a chaotic system and is therefore a physically meaningful quantity
+rather than a regularization device.
+
+Let $\Theta \in \R^{M_{\mathrm{tr}} \times p}$ collect the $M_{\mathrm{tr}}$ training
+parameter vectors, $\bs{y} \in \R^{M_{\mathrm{tr}}}$ the corresponding coefficients for a
+fixed pair $(c,k)$, $\mathrm{K} \in \R^{M_{\mathrm{tr}} \times M_{\mathrm{tr}}}$ the Gram
+matrix $\mathrm{K}_{mn} = \kappa(\bs{\theta}^{(m)}, \bs{\theta}^{(n)})$, and
+$\bs{\kappa}_\ast \in \R^{M_{\mathrm{tr}}}$ the vector
+$(\bs{\kappa}_\ast)_m = \kappa(\bs{\theta}^{(m)}, \bs{\theta}_\ast)$ at a query
+$\bs{\theta}_\ast$. The posterior is Gaussian with mean and variance
+\begin{align}
+  m_{c,k}(\bs{\theta}_\ast) &= \bs{\kappa}_\ast^{\top}
+    \left( \mathrm{K} + \sigma_n^2 I_{M_{\mathrm{tr}}} \right)^{-1} \bs{y},
+  \label{eq:gp-mean} \\
+  v_{c,k}(\bs{\theta}_\ast) &= \kappa(\bs{\theta}_\ast, \bs{\theta}_\ast)
+    - \bs{\kappa}_\ast^{\top}
+    \left( \mathrm{K} + \sigma_n^2 I_{M_{\mathrm{tr}}} \right)^{-1} \bs{\kappa}_\ast .
+  \label{eq:gp-var}
+\end{align}
+Hyperparameters $(\sigma_f, \ell_1, \ldots, \ell_p, \sigma_n)$ are obtained by maximizing the
+log marginal likelihood
+\begin{equation}
+  \log p(\bs{y} \mid \Theta) = -\tfrac{1}{2} \bs{y}^{\top} A^{-1} \bs{y}
+  - \tfrac{1}{2} \log \det A - \tfrac{M_{\mathrm{tr}}}{2} \log 2\pi,
+  \qquad A = \mathrm{K} + \sigma_n^2 I ,
+  \label{eq:mll}
+\end{equation}
+at cost $O(M_{\mathrm{tr}}^3)$ per evaluation through the Cholesky factorization of $A$. For
+$M_{\mathrm{tr}} = O(10^2$--$10^3)$ this is negligible.
+
+Three properties are relevant here. First, \eqref{eq:gp-var} supplies a predictive variance
+in closed form, which permits the model's stated uncertainty to be compared against the
+measured scatter of the FOM. Second, exact inference is available at the sample sizes
+affordable, where a high-capacity parametric regressor would be data-starved. Third, the
+fitted length scales rank the sensitivity of the outcome to each component of $\bs{\theta}$,
+since $\ell_i \to \infty$ removes input $i$ from \eqref{eq:matern}; this follows from
+\eqref{eq:mll} without additional sampling.
+
+\section{The composed surrogate and its dimensions}
+\label{sec:dimensions}
+
+The surrogate for channel $c$ is
+\begin{equation}
+  \hat{\bs{s}}_c(\bs{\theta}) = \bar{\bs{s}}_c + \Phi_c \bs{m}_c(\bs{\theta}),
+  \qquad
+  \bs{m}_c(\bs{\theta}) = \big[ m_{c,1}(\bs{\theta}), \ldots, m_{c,K_c}(\bs{\theta})
+  \big]^{\top} \in \R^{K_c} .
+  \label{eq:surrogate}
+\end{equation}
+Because \eqref{eq:surrogate} is affine in the coefficients, $\hat{\bs{s}}_c$ is the exact
+conditional mean of the reduced representation,
+$\E[\bs{s}_c \mid \bs{\theta}] = \bar{\bs{s}}_c + \Phi_c \E[\bs{a}_c \mid \bs{\theta}]$;
+the independence assumed across $k$ therefore does \emph{not} bias the predicted mean field.
+It affects only the predictive covariance, which under independence is the rank-$K_c$ matrix
+\begin{equation}
+  \mathrm{Cov}\!\left[ \bs{s}_c \mid \bs{\theta} \right]
+  \approx \Phi_c \, \mathrm{diag}\!\left( v_{c,1}(\bs{\theta}), \ldots,
+  v_{c,K_c}(\bs{\theta}) \right) \Phi_c^{\top} \in \R^{N \times N},
+  \label{eq:field-cov}
+\end{equation}
+and which omits any variance in the discarded subspace.
+
+The number of scalar GPs required is
+\begin{equation}
+  n_{\mathrm{GP}} = \sum_{c \in \mathcal{C}} K_c ,
+  \label{eq:ngp}
+\end{equation}
+where $\mathcal{C} \subseteq \{1, \ldots, n_c\}$ is the set of predicted channels.
+Predicting all channels at a common rank $K$ gives $n_{\mathrm{GP}} = n_c K = 4K$, and the
+surrogate is a map $\R^{p} \to \R^{4K}$ followed by $n_c$ independent affine liftings
+$\R^{K} \to \R^{N}$. For the terminal-state task of Section~\ref{sec:measured} we take
+$\mathcal{C} = \{1\}$ and $K_1 = 20$, so $n_{\mathrm{GP}} = 20$ and the surrogate is
+$\R^{7} \to \R^{20} \to \R^{16\,384}$. Table~\ref{tab:dims} collects the dimensions.
+
+\begin{table}[t]
+\centering
+\begin{tabular}{llr}
+\toprule
+Symbol & Meaning & Value \\
+\midrule
+$d$ & spatial dimension & 3 \\
+$n_p$ & particles per realization & 3375 \\
+$n_q$ & FOM state dimension, $2 d n_p$ & 20\,250 \\
+$p$ & parameters, $\dim \bs{\theta}$ & 7 \\
+$n_c$ & channels, $1 + d$ & 4 \\
+$(N_1,N_2,N_3)$ & grid nodes per axis & $(32,32,16)$ \\
+$N$ & nodes per channel, $N_1 N_2 N_3$ & 16\,384 \\
+$\dim \bs{s}$ & interpolated state, $n_c N$ & 65\,536 \\
+$M$ & realizations (snapshots) & 150 \\
+$N_t$ & recorded instants per realization & 10 \\
+$r_c$ & $\mathrm{rank}\,\tilde{X}_c \leq \min(M-1,N)$ & $\leq 149$ \\
+$K_c$ & retained modes, channel $c$ & 20 \\
+$n_{\mathrm{GP}}$ & scalar GPs, $\sum_{c \in \mathcal{C}} K_c$ & 20 \\
+\bottomrule
+\end{tabular}
+\caption{Dimensions of the full-order model, the grid interpolation, the reduced basis and
+the regressor.}
+\label{tab:dims}
+\end{table}
+
+\section{Measured results}
+\label{sec:measured}
+
+\subsection{Spectra}
+
+For $M = 150$ realizations, a basis built from $M_{\mathrm{tr}} = 120$ and evaluated on the
+$|\mathcal{T}| = 30$ held out, \eqref{eq:error-proj} gives for the mass channel $c=1$ at
+terminal time $T = 2$\,s:
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+$K_1$ & 0 (mean field only) & 5 & 10 & 20 & 40 \\
+\midrule
+$\varepsilon^{\text{proj}}_1$ & 0.871 & 0.516 & 0.381 & 0.243 & 0.192 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+with $\eta_1 = 0.90$ at $K_1 = 11$ and $\eta_1 = 0.99$ at $K_1 = 51$. A linear basis is
+adequate for this channel: $K_1 = 20$ reduces a $16\,384$-dimensional field to a relative
+error of $0.24$, against $0.87$ for the mean field alone.
+
+The momentum channels admit no useful representation at $T$, with
+$\varepsilon^{\text{proj}}_c(20) \approx 0.98$ for $c = 2,3,4$. This reflects the state and
+not the method. The ratio of root-mean-square (RMS) momentum density to RMS mass density
+falls from $2.29$ at $t = 0.2$\,s to $0.018$ at $t = 2$\,s: the assembly is at rest and
+$\rho \bs{u}$ is residual creep. Evaluated at $t = 0.2$\,s the same construction gives
+$\varepsilon^{\text{proj}}_c(20) = 0.35$--$0.40$ for $c = 2,3,4$ against $0.34$ for $c = 1$.
+The momentum channels are thus informative during transport and vacuous at rest, consistent
+with their role in Section~\ref{sec:encoder}. Since the initial velocity enters
+$\bs{\theta}$ directly, no information is lost by taking $\mathcal{C} = \{1\}$ for the
+terminal-state surrogate.
+
+\subsection{Composed surrogate}
+
+With $\mathcal{C} = \{1\}$, $K_1 = 20$, $n_{\mathrm{GP}} = 20$, $M_{\mathrm{tr}} = 120$ and
+$|\mathcal{T}| = 30$:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Quantity & Relative error \\
+\midrule
+Mean field only, $K_1 = 0$ & 0.871 \\
+$\varepsilon^{\text{proj}}_1(20)$, truncation only, Eq.~\eqref{eq:error-proj} & 0.243 \\
+$\varepsilon^{\text{sur}}_1(20)$, composed surrogate, Eq.~\eqref{eq:error-sur} & 0.381 \\
+Regression alone, in coefficient space & 0.350 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+and $\eta_1(20) = 0.968$. The truncation and regression contributions are comparable, so
+neither refining the basis nor improving the regressor alone would reduce
+$\varepsilon^{\text{sur}}_1$ substantially. The per-mode coefficient of determination on
+$\mathcal{T}$ is $R^2 \geq 0.93$ for $k \leq 5$, decaying to $R^2 \approx 0.73$--$0.86$ by
+$k = 9$: the leading modes carry smooth, parameter-driven structure and the tail carries
+realization-specific detail.
+
+Pooling all modes, the standardized residuals
+$z_{c,k} = (m_{c,k} - a_{c,k}) / v_{c,k}^{1/2}$ satisfy
+$\mathrm{Pr}(|z| \leq 1) = 0.743$ and $\mathrm{Pr}(|z| \leq 2) = 0.918$ against nominal
+$0.683$ and $0.954$, with $\mathrm{RMS}(z) = 1.16$. The predictive variance
+\eqref{eq:gp-var} is close to calibrated and mildly overconfident.
+
+The leading modes admit direct physical interpretation. Over the training set the
+correlation between $(\bs{a}_1)_k$ and the components of $\bs{\theta}$ is maximal at $0.673$
+for $k=1$ against the first velocity component, $0.776$ for $k=2$ against the second, and
+$0.898$ for $k=6$ against the particle mass; the singular values $\sigma_{1,1} = 107.8$ and
+$\sigma_{1,2} = 101.7$ are nearly equal, as required by the symmetry of $\Omega$ and
+$\mathcal{P}$ under exchange of the first two coordinates.
+
+Ranking inputs by ARD relevance, the $\sigma^2$-weighted mean of $1/\ell_i$ over retained
+modes,
+\begin{equation}
+  v_{x}\,(1.94) \; \approx \; v_{y}\,(1.66) \; > \; \mu\,(1.25) \; > \;
+  v_{z}\,(0.90) \; > \; m\,(0.78) \; \approx \; e\,(0.74) \; \gg \; z_0\,(0.23).
+\end{equation}
+Aggregating $\ell_i$ rather than $1/\ell_i$ is incorrect: the basis assigns the two
+horizontal velocity components to separate modes of nearly equal energy, so a weighted mean
+of length scales ranks $v_x$ above $v_y$ by the margin
+$\sigma_{1,1}^2 - \sigma_{1,2}^2$ alone, an artifact of the aggregation rather than a
+property of the system.
+
+\subsection{Irreducible scatter}
+\label{sec:floor}
+
+The errors above are uninterpretable without the scatter of the FOM itself at fixed
+$\bs{\theta}$. We generate an ensemble of $E$ realizations sharing one $\bs{\theta}$ and
+differing only by an independent random displacement of magnitude $\epsilon$ applied to
+every initial particle position, and measure separation in two senses: the root-mean-square
+(RMS) separation of corresponding particles,
+\begin{equation}
+  D_{\text{grain}}(t) = \left( \frac{1}{n_p} \sum_{i=1}^{n_p}
+  \norm{ \bs{x}_i^{(e)}(t) - \bs{x}_i^{(0)}(t) }_2^2 \right)^{1/2},
+  \label{eq:grain-divergence}
+\end{equation}
+and the relative difference of the mass field,
+$D_{\text{field}}(t) = \norm{\bs{s}_1^{(e)}(t) - \bs{s}_1^{(0)}(t)}_2 /
+\norm{\bs{s}_1^{(0)}(t)}_2$.
+
+For $\epsilon = 10^{-3} r$, with $r$ the particle radius, $D_{\text{grain}}$ amplifies by a
+factor $3.8 \times 10^{3}$, from $10^{-5}$\,m to $3.81 \times 10^{-2}$\,m, the latter being
+$1.9$ particle diameters. The growth is not a single exponential: the local rate
+$\mathrm{d}(\ln D_{\text{grain}})/\mathrm{d}t$ is $23.3\,\mathrm{s}^{-1}$ on
+$t \in [0.02, 0.06]$\,s, falls to a sustained $5.6$--$6.4\,\mathrm{s}^{-1}$ on
+$[0.14, 0.60]$\,s, corresponding to an $e$-folding time
+$\lambda^{-1} = 0.16$--$0.18$\,s, and collapses to $0.17\,\mathrm{s}^{-1}$ thereafter. The
+plateau is reached, to within ten percent, at $t = 0.62$\,s, which we take as the horizon
+over which individual positions remain predictable.
+
+The plateau is set by jamming rather than by the assembly scale: growth ceases when the pile
+comes to rest and frictional contacts lock the packing, which is why $D_{\text{grain}}$
+saturates at $1.9$ diameters and not at the extent of the domain. The estimate
+$\lambda^{-1} \ln (D_{\text{sat}}/\epsilon) = 1.38$\,s consequently overstates the measured
+horizon, the early growth being faster than the sustained rate.
+
+Over the same interval $D_{\text{field}}$ reaches only $0.086$ and the displacement of the
+field center of mass $0.009$ grid nodes. Chaos destroys the trajectory and leaves the
+coarse-grained functional intact.
+
+For the surrogate the relevant quantity is the scatter of realizations about their
+conditional mean, not the separation of two realizations. If
+$\bs{s}_1 = \bs{\mu} + \bs{n}$ with $\E[\bs{n}] = \bs{0}$ and $\bs{n}$ independent between
+realizations, then
+\begin{equation}
+  \E \norm{\bs{s}_1^{(a)} - \bs{s}_1^{(b)}}_2^2 = 2\,\E\norm{\bs{n}}_2^2 ,
+  \label{eq:sqrt2}
+\end{equation}
+so a model predicting $\bs{\mu}$ incurs $\norm{\bs{n}}$ while the pairwise difference is
+larger by $\sqrt{2}$. With $\epsilon = 0.25 r$, comparable to the lattice disorder, and
+$E = 16$, the measured pairwise difference is $0.245$ and the measured RMS deviation about
+the ensemble mean is
+\begin{equation}
+  \varepsilon^{\text{floor}}_1 = \left(
+  \frac{\sum_{e} \norm{ \bs{s}_1^{(e)} - \bar{\bs{s}}_1^{\,\text{ens}} }_2^2}{
+  \sum_{e} \norm{ \bs{s}_1^{(e)} }_2^2} \right)^{1/2} = 0.168 ,
+  \label{eq:floor}
+\end{equation}
+their ratio being $1.46$ against the $\sqrt{2} = 1.414$ predicted by \eqref{eq:sqrt2}.
+
+Relative to \eqref{eq:floor}, $\varepsilon^{\text{proj}}_1(20) = 0.243$ is $1.45$ times the
+floor and $\varepsilon^{\text{sur}}_1(20) = 0.381$ is $2.27$ times it. Both exceed the floor,
+so both admit improvement; substituting the pairwise $0.245$ for \eqref{eq:floor} would have
+indicated, incorrectly, that the surrogate was near-optimal. Since
+$\varepsilon^{\text{proj}}_1(40) = 0.192$ remains above $0.168$, the truncation rank is not
+yet sufficient at $K_1 = 20$, and the gap
+$\varepsilon^{\text{sur}}_1 - \varepsilon^{\text{proj}}_1$ indicates the regression as the
+larger of the two deficits at $M_{\mathrm{tr}} = 120$.
+
+\section{Latent dynamics}
+\label{sec:dynamics}
+
+\subsection{Formulation}
+
+Section~\ref{sec:gp} regresses the terminal state directly from $\bs{\theta}$. An alternative is to
+learn a one-step map in the reduced coordinates and apply it repeatedly. Partition $\bs{\theta}$ as
+$\bs{\theta} = (\bs{\theta}_a, \bs{\theta}_m)$, with $\bs{\theta}_a \in \R^{4}$ the action
+components (the three initial velocity components and the release height) and
+$\bs{\theta}_m \in \R^{3}$ the material components (particle mass, restitution, friction). Let
+\begin{equation}
+  \bs{z}(t) = \big[\, \bs{a}_1(t)^{\top}, \ldots, \bs{a}_{n_c}(t)^{\top} \,\big]^{\top}
+  \in \R^{n_z}, \qquad n_z = \sum_{c=1}^{n_c} K_c ,
+  \label{eq:latent-state}
+\end{equation}
+be the concatenated modal coordinates of all $n_c$ channels, each obtained by
+\eqref{eq:projection}. We regress
+\begin{equation}
+  \mathcal{G} : \R^{n_z + 3} \to \R^{n_z},
+  \qquad
+  \bs{z}(t + \Delta) = \mathcal{G}\big( \bs{z}(t), \bs{\theta}_m \big),
+  \label{eq:step-map}
+\end{equation}
+component-wise by $n_z$ independent Gaussian processes as in Section~\ref{sec:gp}, and define the
+$j$-step prediction by composition,
+\begin{equation}
+  \hat{\bs{z}}(t_0 + j\Delta) = \mathcal{G}^{\,j}\big( \bs{z}(t_0), \bs{\theta}_m \big),
+  \label{eq:rollout}
+\end{equation}
+with $\bs{z}(t_0)$ the projection of an observed initial field. Here $\Delta = 0.1$\,s and the solver
+timestep is $10^{-4}$\,s, so each application of $\mathcal{G}$ advances $10^{3}$ solver steps.
+
+Two choices are consequential. First, all $n_c = 4$ channels are carried in \eqref{eq:latent-state},
+whereas Section~\ref{sec:measured} predicts only $c=1$: the mass field alone is not a Markov state,
+since two assemblies with equal mass fields and unequal velocity fields evolve differently. Second,
+$\bs{\theta}_a$ is deliberately \emph{withheld} from \eqref{eq:step-map}. Supplying it would permit
+$\mathcal{G}$ to ignore $\bs{z}$ and internally represent $\bs{\theta} \mapsto \bs{z}(t+\Delta)$,
+collapsing the construction onto the direct regression of Section~\ref{sec:gp} and rendering the
+sufficiency of $\bs{z}$ untestable.
+
+\subsection{Error decomposition}
+
+The error of \eqref{eq:rollout} separates into three terms, each independently measurable, and the
+identity of the dominant term determines which remedy is appropriate. Writing
+$\varepsilon^{\text{proj}}$ for \eqref{eq:error-proj} evaluated at time $t$,
+$\varepsilon^{\text{step}}$ for the error of a single application of $\mathcal{G}$ to the
+\emph{projected} state (teacher forcing), and $\varepsilon^{\text{roll}}$ for that of
+\eqref{eq:rollout},
+\begin{equation}
+  \underbrace{\varepsilon^{\text{proj}}}_{\text{truncation}}
+  \; \leq \;
+  \underbrace{\varepsilon^{\text{step}}}_{+\;\text{regression}}
+  \; \leq \;
+  \underbrace{\varepsilon^{\text{roll}}}_{+\;\text{accumulation}} .
+  \label{eq:three-terms}
+\end{equation}
+At $K_1 = 16$ we measured $\varepsilon^{\text{proj}} = 0.4012$ and
+$\varepsilon^{\text{step}} = 0.4013$ at $t = 1$\,s: the regression term is $10^{-4}$, so the
+truncation term accounts for $86\%$ of $\varepsilon^{\text{roll}} = 0.464$ and no quantity of
+additional training data could have improved the result. Raising the rank to $K_1 = 96$ reduced
+$\varepsilon^{\text{proj}}$ to $0.173$ and left accumulation dominant, at which point reducing the
+number of compositions in \eqref{eq:rollout} and increasing the density of the training design became
+the appropriate remedies.
+
+\subsection{Results}
+
+With $K_1 = 96$, $K_{2,3,4} = 24$ so that $n_z = 168$, $\Delta = 0.1$\,s, $M = 1536$ realizations of
+$N_t = 10$ instants, and $M_{\mathrm{tr}} = 900$ transitions drawn from the $12\,744$ available:
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Quantity at $t = 1$\,s & $\Delta = 0.05$\,s, $M = 256$ & $\Delta = 0.10$\,s, $M = 1536$ \\
+\midrule
+$\varepsilon^{\text{proj}}$ (truncation) & 0.173 & 0.108 \\
+$\varepsilon^{\text{step}}$ (teacher forced) & 0.177 & 0.109 \\
+$\varepsilon^{\text{roll}}$ (rollout) & 0.445 & \textbf{0.174} \\
+persistence, $\bs{z}(t+\Delta) = \bs{z}(t)$ & 1.762 & 1.531 \\
+accumulation, $\varepsilon^{\text{roll}} - \varepsilon^{\text{step}}$ & 0.268 & 0.065 \\
+$\varepsilon^{\text{floor}}$ for that configuration & 0.168 & 0.154 \\
+$\varepsilon^{\text{roll}} / \varepsilon^{\text{floor}}$ & 2.65 & \textbf{1.13} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$\varepsilon^{\text{roll}}$ is non-monotonic in $t$, attaining $0.33$ at $t \approx 0.35$\,s before
+decreasing: the impact and spreading phase is the least predictable part of the trajectory, after
+which the assembly jams and the state becomes easier to predict.
+
+The improvement was obtained by halving the number of compositions in \eqref{eq:rollout} and by
+contracting $\mathcal{P}$ by approximately $40\%$ along each axis. The latter reduces
+$\varepsilon^{\text{step}}$ at fixed $M_{\mathrm{tr}}$, since a fixed training set covers a smaller
+domain more densely, and simultaneously reduces $\varepsilon^{\text{proj}}$, since a less diverse
+ensemble is spanned by fewer modes ($\eta_1(96)$ rising from $0.9943$ to $0.9974$). It is
+purchased at the cost of generality: the contracted $\mathcal{P}$ has approximately $7\%$ of the
+original volume in $p = 7$ dimensions, and $\varepsilon^{\text{roll}} = 0.174$ is meaningful only on
+the contracted domain.
+
+We note that exact Gaussian process inference is $O(M_{\mathrm{tr}}^3)$ per evaluation of
+\eqref{eq:mll}, so $M_{\mathrm{tr}}$ cannot be raised in proportion to $M$. A larger $M$ improves
+the basis and permits a better-covering subset, but reducing $\varepsilon^{\text{step}}$ at fixed
+$M_{\mathrm{tr}}$ requires contracting $\mathcal{P}$ rather than enlarging the design.
+
+\section{The irreducible floor}
+\label{sec:floor-theory}
+
+Every error reported above is quoted against $\varepsilon^{\text{floor}}$, and the definition of that
+quantity, its justification, and the manner of its measurement are given here in full, since a
+surrogate error is not interpretable without it.
+
+\subsection{Definition}
+
+Let $\bs{\theta}$ be fixed and let $\omega$ denote the microstate, that is, the particular initial
+packing of the assembly. The vector $\bs{\theta}$ specifies the \emph{macrostate}; it does not
+determine $\omega$, and many $\omega$ are consistent with one $\bs{\theta}$. The terminal field is
+therefore a random variable $\bs{s}_1(\bs{\theta}, \omega)$, and any surrogate
+$\hat{\bs{s}}_1(\bs{\theta})$ is a function of $\bs{\theta}$ alone. Write
+\begin{equation}
+  \bs{\mu}(\bs{\theta}) = \E_\omega \big[ \bs{s}_1(\bs{\theta}, \omega) \big],
+  \qquad
+  \bs{n}(\bs{\theta}, \omega) = \bs{s}_1(\bs{\theta}, \omega) - \bs{\mu}(\bs{\theta}),
+  \qquad \E_\omega[\bs{n}] = \bs{0}.
+  \label{eq:decomposition}
+\end{equation}
+
+\subsection{Justification}
+
+Expanding the expected squared error of an arbitrary $\hat{\bs{s}}_1$ and using
+$\E_\omega[\bs{n}] = \bs{0}$ to annihilate the cross term,
+\begin{equation}
+  \E_\omega \norm{ \hat{\bs{s}}_1(\bs{\theta}) - \bs{s}_1(\bs{\theta}, \omega) }_2^2
+  = \underbrace{\norm{ \hat{\bs{s}}_1(\bs{\theta}) - \bs{\mu}(\bs{\theta}) }_2^2}_{\text{model error}}
+  + \underbrace{\E_\omega \norm{ \bs{n}(\bs{\theta}, \omega) }_2^2}_{\text{irreducible}} .
+  \label{eq:bias-variance}
+\end{equation}
+The second term does not contain $\hat{\bs{s}}_1$. It is therefore unaffected by any change to the
+surrogate, and the first term is minimised, at zero, by $\hat{\bs{s}}_1 = \bs{\mu}$. The best
+attainable error is thus $\big( \E_\omega \norm{\bs{n}}_2^2 \big)^{1/2}$, and it is unattainable to
+improve upon because the information distinguishing realizations is absent from the input, not merely
+unexploited. In the terminology of uncertainty quantification this is the \emph{aleatoric} component,
+as against the \emph{epistemic} component represented by the first term.
+
+\subsection{Measurement}
+
+We generate $E$ realizations sharing $\bs{\theta}$ and differing only by an independent random
+displacement of magnitude $\epsilon$ applied to each initial particle position, take $\epsilon$
+comparable to the disorder of the packing itself so that the realizations are genuinely distinct
+members of one macrostate, and evaluate the normalized scatter about their sample mean,
+\begin{equation}
+  \varepsilon^{\text{floor}}
+  = \left( \frac{\sum_{e=1}^{E} \norm{ \bs{s}_1^{(e)} - \bar{\bs{s}}_1^{\,\text{ens}} }_2^2}
+  {\sum_{e=1}^{E} \norm{ \bs{s}_1^{(e)} }_2^2} \right)^{1/2},
+  \qquad
+  \bar{\bs{s}}_1^{\,\text{ens}} = \frac{1}{E} \sum_{e=1}^{E} \bs{s}_1^{(e)} .
+  \label{eq:floor-measured}
+\end{equation}
+
+Three properties of \eqref{eq:floor-measured} require comment.
+
+\emph{It is not the pairwise separation.} Substituting the pairwise difference between two
+realizations overstates the floor by $\sqrt{2}$: from \eqref{eq:decomposition} with $\bs{n}$
+independent between realizations,
+\begin{equation}
+  \E \norm{ \bs{s}_1^{(a)} - \bs{s}_1^{(b)} }_2^2
+  = \E \norm{ \bs{n}^{(a)} - \bs{n}^{(b)} }_2^2
+  = 2\, \E \norm{ \bs{n} }_2^2 ,
+  \label{eq:sqrt2-again}
+\end{equation}
+whereas a model predicting $\bs{\mu}$ incurs $\E\norm{\bs{n}}_2^2$. Measured on the contracted
+configuration at $t = 1$\,s with $E = 16$: \eqref{eq:floor-measured} gives $0.154$ while the pairwise
+value is $0.225$, a ratio of $1.463$ against the $\sqrt{2} = 1.414$ predicted by
+\eqref{eq:sqrt2-again}. Quoting the pairwise figure would understate
+$\varepsilon^{\text{roll}}/\varepsilon^{\text{floor}}$ from $1.13$ to $0.77$, that is, would report a
+surrogate as having surpassed a bound it had not reached.
+
+\emph{It is configuration-specific.} $\varepsilon^{\text{floor}}$ depends on $\bs{\theta}$, on the
+horizon, and on the grid; it is $0.168$ for the wide-$\mathcal{P}$ configuration at $t = 2$\,s and
+$0.154$ for the contracted configuration at $t = 1$\,s. It must be re-measured whenever any of these
+changes.
+
+\emph{The sample mean biases it low.} Using $\bar{\bs{s}}_1^{\,\text{ens}}$ in place of the unknown
+$\bs{\mu}$ underestimates the scatter by the factor $\sqrt{(E-1)/E}$, which is $0.968$ at $E = 16$.
+The reported figures are not corrected for this, and it is small relative to the variation of
+$\varepsilon^{\text{floor}}$ with $\bs{\theta}$, which has not been characterized: all values here
+are measured at a single, central $\bs{\theta}$.
+
+\emph{Finally, the floor is not a reconstruction bound.} $\varepsilon^{\text{proj}} = 0.108$ lies
+\emph{below} $\varepsilon^{\text{floor}} = 0.154$, and this is not contradictory: the former is the
+error of compressing a field that has already been realized, the latter the error of predicting which
+field will be realized. Only quantities of the second kind are bounded by
+\eqref{eq:floor-measured}.
+
+\section{Decoding to particles}
+\label{sec:decode}
+
+\subsection{The decode is a sampler}
+
+The interpolation $\mathcal{E}$ of Section~\ref{sec:encoder} is many-to-one: distinct particle
+configurations produce identical fields, since \eqref{eq:deposit} retains only $n_c N$ numbers of the
+$n_q$ that describe $\bs{q}$, and here $n_c N / n_q = 3.2$ but the map is not injective because
+positions within a cell are not resolved. The preimage $\mathcal{E}^{-1}(\bs{s})$ is therefore a set,
+and no inverse exists. We construct instead a sampler
+\begin{equation}
+  \mathcal{D} : \R^{n_c N} \to \R^{n_q},
+  \qquad
+  \mathcal{D}(\bs{s}) \sim \pi\big( \cdot \mid \bs{s} \big),
+  \label{eq:decoder}
+\end{equation}
+drawing one element of that set. Consequently $\mathcal{D}(\mathcal{E}(\bs{q})) \neq \bs{q}$: the
+construction reproduces the field, not the configuration.
+
+\subsection{Construction}
+
+Given a predicted mass field $\bs{\rho}$ and momentum fields $(\bs{\rho u})_j$, and given that the
+per-particle mass $m$ and hence the total mass $M = n_p m$ are known from $\bs{\theta}$:
+
+\emph{(i) Non-negativity.} A truncated expansion $\bs{\rho} = \bar{\bs{s}}_1 + \Phi_1 \bs{a}_1$ is not
+constrained to be non-negative and is not, so set $\tilde{\rho}_\alpha = \max(\rho_\alpha, 0)$. The
+discarded fraction $\sum_\alpha \max(-\rho_\alpha,0) / \sum_\alpha \max(\rho_\alpha,0)$ is $0.04$ to
+$0.10$ in the cases reported below.
+
+\emph{(ii) Thresholding.} Truncation also produces small positive values far from the material. Set
+$\tilde{\rho}_\alpha \leftarrow 0$ wherever $\tilde{\rho}_\alpha < \tau \max_\beta
+\tilde{\rho}_\beta$, with $\tau = 0.02$. This step is not cosmetic. Individually negligible, those
+values are spread over all $N = 16\,384$ nodes and collectively attract a substantial number of
+particles into a halo absent from the truth; and because they sit where $\tilde{\rho} \approx 0$, the
+quotient in \eqref{eq:decode-velocity} assigns those particles very large velocities. Measured at
+$t = 0.7$\,s, thresholding reduces the error in the sampled spatial standard deviation from
+$0.092$\,m to $0.006$\,m and the sampled kinetic energy from $141$ to $7.6$ against a true value of
+$3.6$.
+
+\emph{(iii) Mass normalisation.} Set $\hat{\rho}_\alpha = \tilde{\rho}_\alpha M / \sum_\beta
+\tilde{\rho}_\beta$, so that the decode conserves mass exactly even though steps (i) and (ii) do not.
+
+\emph{(iv) Positions.} Two samplers are used. The first draws a node index
+$\alpha \sim \hat{\rho}_\alpha / M$ and then a position uniformly in that node's cell; it reproduces
+the nodal mass in expectation and ignores the packing constraint. The second is described in
+Section~\ref{sec:poisson}.
+
+\emph{(v) Velocities.} With $w_\alpha(\bs{x})$ the same weights \eqref{eq:weights} used to deposit,
+\begin{equation}
+  \bs{v}(\bs{x}) = \frac{\sum_\alpha w_\alpha(\bs{x}) \, (\bs{\rho u})_\alpha}
+  {\sum_\alpha w_\alpha(\bs{x}) \, \hat{\rho}_\alpha},
+  \label{eq:decode-velocity}
+\end{equation}
+evaluated at the sampled position and set to zero where the denominator vanishes. Using the deposit's
+own weights rather than the nodal value keeps $\bs{v}$ continuous across cell boundaries.
+
+\subsection{Minimum-separation sampling}
+\label{sec:poisson}
+
+The uniform sampler of (iv) produces a configuration in which particles overlap: node spacing is
+$h_1 = h_2 = 0.065$\,m against a diameter $2r = 0.02$\,m, so roughly $30$ particles share a node and
+uniform placement within it is Poisson-like rather than packed. Such a configuration is unusable as an
+initial condition, for the reason quantified in Section~\ref{sec:restart}.
+
+We therefore impose
+\begin{equation}
+  \norm{ \bs{x}_i - \bs{x}_j }_2 \; \geq \; 2r \quad \forall\, i \neq j,
+  \qquad
+  \Omega_j^{\min} + r \leq (\bs{x}_i)_j \leq \Omega_j^{\max} - r ,
+  \label{eq:poisson-constraint}
+\end{equation}
+the second condition ensuring a particle centre is a full radius clear of each wall. Candidates are
+proposed as in (iv) and accepted only if \eqref{eq:poisson-constraint} holds, with a spatial hash of
+cell size $2r$ so that a candidate need be tested against the $3^d = 27$ neighbouring cells only.
+Bridson's algorithm is the usual construction for a Poisson-disk set but generates a spatially
+\emph{uniform} intensity; here the intensity is prescribed by $\hat{\rho}$ and the disk radius is
+fixed by the physics, so the density is carried by the proposal distribution instead.
+
+Candidates violating the second condition of \eqref{eq:poisson-constraint} must be \emph{rejected} and
+not projected onto the boundary. Projection collapses all such candidates onto a face --- and since the
+assembly rests on $\Omega_3^{\min}$, a large fraction of proposals are of this kind --- which destroys
+the separation just enforced; we measured $36\%$ of pairs in violation of the first condition despite a
+correct acceptance test.
+
+The construction cannot produce a density exceeding the maximum packing fraction. Where $\hat{\rho}$
+demands one, the requested particles cannot be placed; this indicates that the predicted field is
+locally unphysical, and the deficit is reported rather than concealed. In the cases below no deficit
+occurred: all $n_p = 3375$ particles were placed.
+
+Measured on the resulting configuration: $\min_{i \neq j} \norm{\bs{x}_i - \bs{x}_j}_2 / 2r = 1.0002$,
+median nearest-neighbour distance $1.157 \times 2r$, and $0\%$ of pairs in contact, against $73\%$ for
+the uniform sampler at a median of $0.699 \times 2r$.
+
+\subsection{Restart validation}
+\label{sec:restart}
+
+Whether $\mathcal{D}(\bs{s})$ is admissible as an initial condition is decided by integrating from it.
+Both configurations were written in the solver's state layout and advanced; the total energy of
+Section~\ref{sec:pod} (kinetic, gravitational and contact-elastic) at $t=0$ and thereafter is
+
+\begin{center}
+\begin{tabular}{lrrl}
+\toprule
+Sampler & pairs in contact & $E(0)$ & behaviour \\
+\midrule
+uniform & $73\%$ & $14\,893.5$ & $90\%$ of $E$ released within $0.01$\,s \\
+minimum-separation & $0\%$ & $1\,270.8$ & monotone decay \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The factor of $11.7$ is elastic energy stored in overlapping contacts by \eqref{eq:deposit}'s inverse
+being taken carelessly, and it is converted immediately into kinetic energy. From the
+minimum-separation configuration the energy decreases monotonically over the full second integrated,
+$1270.8 \to 78.3$, with no contact-list overflow: the state is admissible.
+
+\subsection{Limitations}
+
+Two are intrinsic to the channels retained.
+
+Only the first velocity moment is stored. The within-node velocity distribution --- the granular
+temperature --- is discarded by \eqref{eq:deposit}, so \eqref{eq:decode-velocity} assigns every
+particle in a neighbourhood the same velocity and the sampled kinetic energy is biased. Retaining a
+second-moment channel $\rho u_i u_j$ would recover it.
+
+Enforcing \eqref{eq:poisson-constraint} costs fidelity in the low-order moments, because the sampler
+cannot place particles at a density above the packing limit and displaces them outward instead. At
+$t = 1$\,s the error in the centroid rises from $0.025$\,m to $0.057$\,m and in the spatial standard
+deviation from $0.011$\,m to $0.045$\,m, against a particle diameter of $0.02$\,m. The uniform sampler
+is therefore preferable for visualisation and for bulk statistics, and the minimum-separation sampler
+whenever the configuration is to be integrated.
+
+\section*{Nomenclature}
+
+\begin{tabbing}
+\hspace{2.6cm} \= \kill
+ARD \> automatic relevance determination (one kernel length scale per input) \\
+FOM \> full-order model (the particle dynamics simulation) \\
+GP \> Gaussian process \\
+POD \> proper orthogonal decomposition \\
+QMC \> quasi-Monte Carlo \\
+RMS \> root mean square \\
+SVD \> singular value decomposition \\
+\end{tabbing}
+
+\end{document}
