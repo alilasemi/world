@@ -2,6 +2,52 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working agreements
+
+### Record durable knowledge here, not in auto-memory
+
+**Anything worth remembering across sessions belongs in this file** (or another checked-in doc), not
+in Claude Code's auto-memory directory. Auto-memory lives under `~/.claude/` on this machine only,
+and this machine may be wiped; `CLAUDE.md` is version-controlled and travels with the repo. When you
+learn something durable — a build gotcha, an environment quirk, a decision and its rationale — write
+it here in the same pass as the work, without being asked. Prefer updating an existing section over
+appending a new one.
+
+Corollary: if you find yourself about to write a memory file, write a CLAUDE.md section instead.
+
+### Constraints
+
+**The sandbox is disabled in this repository** (see "Sandbox and GPU access" below), so nothing
+mechanically enforces the rules below. They are the only guardrail. Follow them unless the user
+explicitly asks otherwise *in the moment* — a standing exception is never assumed.
+
+- **Stay inside the repository.** Do not delete, move, or modify files outside
+  `~/real-time-particles`. Other repositories in `$HOME` are off limits. Scratch files go in the repo
+  (gitignored) or `$TMPDIR` — never in a sibling project.
+- **Never modify a git remote.** No `git push` (including `--force`), no creating/deleting remote
+  branches or tags, no PR or release creation, no `git remote set-url`. Local commits are fine when
+  asked for; publishing is always the user's action.
+- **Never touch logged-in accounts or browser state.** No Chrome/Chromium/Firefox profiles, cookies,
+  saved logins, session tokens, or browser-automation against authenticated sites.
+- **Never read secrets or use keys.** No `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gcloud`,
+  `~/.netrc`, keyrings, or credential files — not directly, and not indirectly via a script,
+  interpreter, or archive tool that would route around a deny rule. Do not read dotfiles in `$HOME`.
+  (Repo-local project config — `.gitignore`, `.clangd`, `.claude/` — is ordinary project material and
+  fine to read.)
+- **Do not exfiltrate.** Repository contents, local data, and machine details do not go to external
+  services. Network use is for fetching dependencies and documentation.
+- **Do not reconfigure the harness.** Leave `~/.claude/settings.json`, hooks, and permission rules
+  alone. Read them when diagnosing a tooling problem the user raised; never write them.
+- **No privilege escalation or system changes.** No `sudo`, no system package installs, no changes
+  outside the user account.
+- **Confirm before irreversible local actions** — `rm -rf`, `git reset --hard`, history rewrites,
+  overwriting uncommitted work. Look at what you are about to destroy first.
+
+### Commits
+
+Do not add a `Co-Authored-By: Claude` trailer or any other Claude Code attribution to commits in this
+repo. Commit only when asked.
+
 **POD study results (measured 2026-08-26 on the 150-rollout pilot; `surrogate/pod_study.py`,
 plot in `assets/screenshots/pod_spectrum.png`).** Linear POD is ADEQUATE for the mass channel and
 no autoencoder escalation is needed yet. Held-out relative L2 error on the settled mass field,
@@ -614,6 +660,33 @@ Through the full server path (unpack + WebSocket) the checked-in config measures
 time**. Note the scaling is *superlinear*: 4.6x the grains costs 12.6x the time between 19.7k and
 91k, because `device_neighbors` (`n*27*k` ints) blows past the 2080's 4 MB L2. That is the wall to
 attack before chasing bigger particle counts.
+
+### Sandbox and GPU access
+
+**Claude Code's Bash sandbox must be disabled in this repo or the GPU is invisible.**
+`real-time-particles/.claude/settings.local.json` carries `{"sandbox": {"enabled": false}}`, while
+`~/.claude/settings.json` keeps `sandbox.enabled: true` so every *other* project stays sandboxed.
+
+Symptom when this is wrong: `cudaMalloc ... failed: no CUDA-capable device is detected`, and
+`nvidia-smi` reporting it "couldn't communicate with the NVIDIA driver", even though the driver is
+loaded and the card is on the PCI bus. Diagnose with `ls /dev/nvidia0` — a sandboxed session sees an
+empty synthetic `/dev` with no `nvidia*` nodes at all.
+
+Three narrower approaches were tried and measured; all are dead ends, so don't re-propose them:
+- `sandbox.excludedCommands` is both unreliable (Claude Code doesn't consistently consult it before
+  sandboxing — upstream issue #17821, closed as not-planned) and leaky: when it *does* fire, the
+  **entire** Bash invocation runs unsandboxed regardless of where the listed command sits, so
+  `rm -rf ~ ; ./build/bin/profile` escapes. It also can't help `compute-sanitizer`, which is a shell
+  wrapper that launches the target as a grandchild.
+- `sandbox.filesystem.allowWrite` on `/dev/nvidia*` does nothing — it grants permission to a path but
+  cannot materialize a character device inside the sandbox's synthetic `/dev`.
+- `sandbox.filesystem.disabled: true` also fails: the sandbox still builds its own minimal `/dev`.
+  It surrenders all filesystem isolation and yields no GPU, so it is strictly a regression.
+
+Two consequences of running unsandboxed: `-arch=native` correctly detects `sm_75` (no `GPU_ARCH=`
+override needed — and note that under the sandbox it *silently* fell back to a default arch with exit
+0, producing a mis-targeted binary rather than an error), and the "Constraints" section above is the
+only thing limiting filesystem and network access.
 
 ## Surrogate tooling (Python)
 
