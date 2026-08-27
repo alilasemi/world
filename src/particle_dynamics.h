@@ -1,3 +1,4 @@
+#include <string>
 #include <vector>
 #include <memory>
 #include <chrono>
@@ -91,6 +92,10 @@ public:
     void initialize_to_cube(const float x0, const float y0, const float z0);
 
     void initialize_to_single_particle(const float x0, const float y0, const float z0);
+
+    // Loads a state written by surrogate/decode_particles.py. Enables the
+    // round trip: simulate -> encode -> predict -> decode -> simulate again.
+    void initialize_from_file(const std::string& path);
 
     void take_step();
 

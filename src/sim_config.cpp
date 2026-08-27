@@ -94,6 +94,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else warn_unknown(section, key);
     } else if (section == "initialization") {
         if (key == "type") cfg.init_type = unquote(value);
+        else if (key == "state_path") cfg.init_state_path = unquote(value);
         else if (key == "x0") cfg.init_x0 = f();
         else if (key == "y0") cfg.init_y0 = f();
         else if (key == "z0") cfg.init_z0 = f();

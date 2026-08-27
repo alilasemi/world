@@ -19,8 +19,10 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     dt = config.dt;
 
     // Initialize on host according to the configured initialization type.
-    if (config.init_type == "two_particles") {
-        initialize_to_two_particles(config.init_x0, config.init_y0);
+    if (config.init_type == "file") {
+        initialize_from_file(config.init_state_path);
+    } else if (config.init_type == "two_particles") {
+        initialize_to_two_particles(config.init_x0, config.init_y0, config.init_z0);
     } else if (config.init_type == "single_particle") {
         initialize_to_single_particle(config.init_x0, config.init_y0, config.init_z0);
     } else {
@@ -204,12 +206,32 @@ void ParticleDynamics::initialize_to_cube(const float x0, const float y0, const 
             }
         }
     }
+}
 
 
-    // Set all particles to the snow material except for the sled particle.
-    for (size_t i = 0; i < n - 1; ++i) {
+void ParticleDynamics::initialize_from_file(const std::string& path) {
+    FILE* handle = fopen(path.c_str(), "rb");
+    if (!handle) {
+        fprintf(stderr, "initialize_from_file: could not open '%s'\n", path.c_str());
+        std::exit(1);
+    }
+    int32_t count = 0;
+    if (fread(&count, sizeof(int32_t), 1, handle) != 1 || count <= 0) {
+        fprintf(stderr, "initialize_from_file: bad particle count in '%s'\n", path.c_str());
+        std::exit(1);
+    }
+    resize(count);
+    const size_t expected = static_cast<size_t>(count) * kStateStride;
+    if (fread(host_state.data(), sizeof(float), expected, handle) != expected) {
+        fprintf(stderr, "initialize_from_file: '%s' is short of %zu floats\n",
+                path.c_str(), expected);
+        std::exit(1);
+    }
+    fclose(handle);
+    for (int i = 0; i < n; ++i) {
         host_material[i] = config.particle_material;
     }
+    printf("Initialized %d particles from '%s'.\n", n, path.c_str());
 }
 
 

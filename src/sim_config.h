@@ -100,6 +100,11 @@ struct SimConfig {
     // the cube of the side length, and the GoogleTest suite constructs a
     // default-configured sim repeatedly.
     std::string init_type = "cube";  // "cube" | "two_particles" | "single_particle" | "file"
+    // For init_type "file": path to a flat binary state, int32 n followed by
+    // n*kStateStride float32 in host_state layout. Written by
+    // surrogate/decode_particles.py, which lets a surrogate-predicted state be
+    // handed back to the solver.
+    std::string init_state_path = "";
     float init_x0 = -0.5f;
     float init_y0 = 0.0f;
     float init_z0 = 0.0f;
