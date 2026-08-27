@@ -188,6 +188,101 @@ its place when theta is unknown (state observed rather than parameterized), when
 the training range, or when **actions arrive mid-trajectory** -- where no single theta exists and the
 direct regression is not definable. `--skip-direct` omits it for that reason.
 
+**Decoding a rollout back to particles (`surrogate/decode_particles.py`, figure
+`assets/screenshots/decoded_particles.png`).** Closes the loop: observed initial field ->
+project -> autoregressive latent rollout -> decode each snapshot to fields -> **sample particle
+positions and velocities**. Run it on a held-out rollout so the test point interpolates the design by
+construction.
+
+**It is a sampler, not an inverse.** Interpolating particles onto a grid is many-to-one, so a field
+has infinitely many consistent particle configurations and sampling draws one. `decode(encode(x))` is
+therefore *not* `x` -- it reproduces the FIELD, not the configuration. Describe it that way.
+
+Algorithm: clamp negative density (a truncated POD reconstruction is not non-negative); rescale to the
+exactly-known total mass `n_p * m` so the decode conserves mass even though the reconstruction does
+not; draw node indices multinomially with probability proportional to nodal mass; place uniformly
+within the node's cell; assign velocity by interpolating momentum and mass at the sampled position
+with the *same* hat weights used to deposit, then dividing.
+
+**Thresholding low-density nodes is not optional -- it fixes two artifacts at once.** A truncated POD
+reconstruction *rings*: it leaves densities far from the material that are individually negligible but,
+summed over 16384 nodes, attract enough grains to produce a diffuse halo across the whole domain. Worse,
+those grains sit where density is near zero, so `rho*u / rho` assigns them enormous velocities and the
+sampled kinetic energy is inflated by more than an order of magnitude. Dropping nodes below 2% of peak
+density (default `--threshold 0.02`, discarding 5-10% of mass, restored by renormalisation):
+
+| at t = 0.70 s | no threshold | threshold 0.02 |
+|---|---|---|
+| spread error (m) | 0.0921 | **0.0063** |
+| centroid error (m) | 0.0330 | **0.0126** |
+| sampled KE (true 3.62) | 141.4 | **7.6** |
+
+With it, centroid error is 0.002-0.026 m and spread error 0.005-0.034 m against a grain diameter of
+0.02 m -- sub-diameter accuracy on the bulk moments -- and sampled kinetic energy tracks the true value
+to ~15% while the material is moving.
+
+**The output is NOT a valid simulation state**, and this is measured, not assumed: 70% of sampled
+grains sit closer than one diameter to a neighbour and the median nearest-neighbour distance is 0.75
+diameters, where a packed state would show ~0 overlaps and a ratio near 1. Node spacing is ~3 grain
+diameters, so ~30 grains share a node and uniform placement gives a Poisson-like arrangement rather
+than a packed one. Handing this to the solver would produce enormous contact forces. Making it
+re-initializable needs Poisson-disk sampling with minimum separation `2r`, or a short damped
+relaxation -- and that capability (fast-forward with the surrogate, then hand back to the solver) is
+the reason it would be worth doing.
+
+**Velocity fluctuations within a node are lost.** Only mean momentum is stored, not the second moment
+`rho*u*u`, so granular temperature is discarded. Adding that channel would recover it.
+
+One diagnostic bug worth remembering: the grid kinetic energy is `sum_a |rho*u_a|^2 / (2 rho_a)` --
+momentum divided by density *at each node*. An earlier version divided by the mean density, which is
+dimensionally wrong and announced itself as energy ratios of 10^3.
+
+**The decoded state IS now re-initializable (`--sampler poisson`, the default), and this was verified
+by restarting the solver from it, not by asserting it.**
+
+`poisson_disk_sample()` does dart throwing with proposals drawn from the density field, accelerated by
+a spatial hash of cell size `2r` so a candidate is tested only against the 27 neighbouring cells.
+Bridson's algorithm is the usual Poisson-disk method but produces a *uniform* density; here the density
+is prescribed by the field and the disk radius is fixed by physics, so the proposal distribution
+carries the density instead. Result: **0.000 grains closer than one diameter**, median
+nearest-neighbour distance 1.15 diameters, all 3375 placed.
+
+`init_type: file` + `initialization.state_path` on the C++ side loads a flat binary (int32 `n`, then
+`n*kStateStride` float32 in `host_state` layout) written by `decode_particles.py`, closing the loop:
+simulate -> encode -> predict -> decode -> **simulate again**.
+
+**The A/B test that proves the sampler matters.** Restarting from the two states, energy at t=0:
+
+| sampler | overlapping pairs | E(0) | behaviour |
+|---|---|---|---|
+| uniform | 70% | **14893.5** | dumps 90% of it within 0.01 s -- a violent elastic burst |
+| poisson | **0%** | **1270.8** | monotone decay, no transient |
+
+The 11.7x excess is spurious *elastic* energy stored in overlapping contacts, converted immediately
+into kinetic energy. Over a full second from the Poisson state the energy is **monotonically decreasing
+throughout** (1270.8 -> 78.3), which is the signature of a state the solver accepts.
+
+**The trade, stated:** enforcing separation costs bulk-moment fidelity, because the sampler cannot
+exceed the local packing limit and therefore spreads grains outward where the predicted field demands
+more density than physically fits. At t=1.0 s, centroid error 0.025 -> 0.057 m and spread error
+0.011 -> 0.045 m going from uniform to Poisson. Use `--sampler uniform` for visualization and bulk
+statistics, `--sampler poisson` when the state must be handed back to the solver.
+
+Note also that a field demanding density above the packing limit is *locally unphysical*, so the
+sampler failing to place grains there is information, not a defect -- `placed` vs `requested` is
+reported for that reason.
+
+**Bug worth remembering: never clip positions after Poisson-disk sampling.** The first version clipped
+candidates into the domain afterwards; the pile rests on the floor, so a large fraction of proposals
+fell below it and clamping them all to `z = z_min` collapsed a layer into one plane, destroying the
+separation the sampler had just enforced (measured: 36% of pairs overlapping despite a correct disk
+test). Out-of-domain candidates must be *rejected*, and a grain centre must stay a full radius clear of
+each wall or it is half-buried in it. A chaotic system
+has an outcome spread no model can beat, and the predictability-horizon measurement (epsilon-perturbed
+ensemble) is what supplies it. If that spread is ~20-25%, a 24% surrogate is essentially optimal and
+the story is complete; if it is ~5%, there is real modeling headroom. **Do not quote surrogate accuracy
+without that denominator.**
+
 *A hypothesis that was checked and rejected:* that the fields are nearly disjointly supported (which
 would force ~one mode per snapshot). Measured pairwise support overlap is 0.81 mean / 0.92 median and
 pairwise cosine similarity 0.35, so the fields overlap heavily. Slow spectrum decay here is shape
