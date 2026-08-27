@@ -31,6 +31,41 @@ learnable as mass — held-out k=20 error at t=0.2 s is 0.35-0.40 for the moment
   state. By t=2 s the state genuinely *is* density alone, which is why the settled outcome is a pure
   density field.
 
+**Stage 1 surrogate fitted (2026-08-26; `surrogate/fit_surrogate.py`, figure in
+`assets/screenshots/stage1_surrogate.png`).** `theta -> a -> s_1`, i.e. `R^7 -> R^20 -> R^16384`,
+with 20 independent scalar GPs (Matern 5/2 + ARD + WhiteKernel), mass channel only, basis and
+normalisations fitted on the training split alone. Held-out relative L2, 120 train / 30 test:
+
+| contribution | error |
+|---|---|
+| ensemble mean only (K=0) | 0.871 |
+| POD projection (truncation floor) | 0.243 |
+| **composed surrogate** | **0.381** |
+| regression alone, in coefficient space | 0.350 |
+
+Truncation and regression contribute comparably, so **neither refining the basis nor improving the
+regressor alone would move the total much** — worth knowing before optimizing either. Per-mode
+held-out R^2 is >= 0.93 for the first six modes and decays to ~0.73-0.86 by mode 9: leading modes
+carry smooth parameter-driven structure, the tail carries realisation-specific detail.
+
+Uncertainty is close to calibrated and mildly overconfident: Pr(|z|<=1) = 0.743 vs nominal 0.683,
+Pr(|z|<=2) = 0.918 vs 0.954, RMS(z) = 1.16.
+
+**The leading POD modes are physically interpretable**, which is a real advantage of the hand-designed
+latent over a learned one: mode 1 correlates 0.673 with the x launch velocity, mode 2 correlates 0.776
+with the y launch velocity (and sigma_1 = 107.8 ~= sigma_2 = 101.7, as the x/y symmetry of the domain
+requires), and mode 6 correlates 0.898 with grain mass.
+
+ARD relevance ranking: `v_x (1.94) ~= v_y (1.66) > mu (1.25) > v_z (0.90) > m (0.78) ~= e (0.74) >>
+z_0 (0.23)`. Release height is nearly irrelevant over its sampled range.
+
+**Methodological trap, found the hard way:** aggregate ARD *relevance* (1/length_scale), never the
+length scales themselves. The basis assigns the two horizontal velocities to *separate* modes of nearly
+equal energy, so a sigma^2-weighted mean of length scales ranks `v_x` above `v_y` by the margin
+`sigma_1^2 - sigma_2^2` alone. The first version of this analysis reported exactly that spurious
+asymmetry, in a setup that is symmetric in x and y by construction — the symmetry is what made it
+detectable.
+
 *A hypothesis that was checked and rejected:* that the fields are nearly disjointly supported (which
 would force ~one mode per snapshot). Measured pairwise support overlap is 0.81 mean / 0.92 median and
 pairwise cosine similarity 0.35, so the fields overlap heavily. Slow spectrum decay here is shape
@@ -375,6 +410,9 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
   throw/material parameters, written to `dataset/design.csv`. A tensor grid costs `k**d` and dies past
   d~4 — the existing `dt x max_force x restitution` sweep is exactly that design and already at its
   limit at three axes — whereas LHS decouples sample count from dimension.
+- `surrogate/fit_surrogate.py` — Stage 1: fits the GPs, reports the truncation/regression error
+  decomposition, per-mode R^2, uncertainty calibration and ARD sensitivity, and writes the
+  imagination-vs-truth figure.
 - `surrogate/pod_study.py` — per-channel POD/SVD study: spectrum, energy captured, held-out
   reconstruction error vs rank, sample complexity (error vs number of training snapshots), and the
   per-checkpoint breakdown that revealed the momentum-decay effect. `--per-checkpoint` is the flag
