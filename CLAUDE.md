@@ -339,6 +339,22 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
   throw/material parameters, written to `dataset/design.csv`. A tensor grid costs `k**d` and dies past
   d~4 — the existing `dt x max_force x restitution` sweep is exactly that design and already at its
   limit at three axes — whereas LHS decouples sample count from dimension.
+- `surrogate/dataset_io.py` — reader for `dataset/grids.bin`. Exposes `mass()`, `momentum()`, and
+  `velocity()` (which guards the empty-node 0/0 divide), plus an `ok` mask built from the manifest's
+  `status` column.
+
+`surrogate/.venv/` and the generated `dataset/*.bin` / `dataset/*.csv` are gitignored;
+`dataset/blob_throw.yaml` and `surrogate/requirements.txt` are tracked.
+
+Sanity check the whole path with:
+```
+surrogate/.venv/bin/python surrogate/make_design.py --rollouts 8 --out dataset/design_smoke.csv
+./build/bin/dataset dataset/blob_throw.yaml dataset/design_smoke.csv
+surrogate/.venv/bin/python surrogate/dataset_io.py
+```
+Deposited mass per checkpoint should equal `grains * grain_mass` to ~1e-7 relative for every rollout —
+that single check validates the binary layout (a wrong stride scrambles it) and the CIC deposit's mass
+conservation at the same time.
 
 ## Client/browser verification (headless)
 
