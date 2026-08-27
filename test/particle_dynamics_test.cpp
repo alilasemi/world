@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <vector>
 
 #include "host_vector.h"
@@ -72,6 +73,32 @@ TEST(ParticleDynamicsTest, RepeatedRunsAreDeterministic) {
     }
 }
 
+// Forces the collision-grid overflow path, which no checked-in config reaches:
+// a 1x1 grid puts every particle in a single cell with room for only two, so
+// fill_cells_kernel must drop the rest. Before the num_per_cell clamp, the
+// dropped particles still incremented the count, and find_neighbors_kernel
+// trusted that count as its loop bound and read past the end of the cell's row.
+// Run the test binary under `compute-sanitizer --tool memcheck` to confirm the
+// read stays in bounds; this test asserts the overflow is reported and the step
+// still produces finite state.
+TEST(ParticleDynamicsTest, GridOverflowIsCountedAndStaysInBounds) {
+    SimConfig config;
+    config.collision_grid_size_x = 1;
+    config.collision_grid_size_y = 1;
+    config.collision_grid_size_z = 1;
+    config.particles_per_cell = 2;
+    ParticleDynamics sim(config);
+    ASSERT_GT(sim.n, config.particles_per_cell);
+
+    EXPECT_EQ(sim.grid_overflow_count(), 0); // lifetime counter starts clean
+    sim.take_step();
+    EXPECT_GT(sim.grid_overflow_count(), 0); // the single cell overflowed
+
+    sim.unpack_state();
+    for (float coordinate : sim.positions) {
+        EXPECT_TRUE(std::isfinite(coordinate));
+    }
+}
 TEST(ParticleDynamicsTest, SledParticleMovesUnderInitialVelocity) {
     ParticleDynamics sim;
     const int sled = sim.n - 1;

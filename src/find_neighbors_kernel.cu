@@ -73,6 +73,18 @@ __global__ void fill_cells_kernel(
             if (atomicCAS(&cell_overflowed[occ_idx], 0, 1) == 0) {
                 atomicAdd(num_overflowed_cells, 1);
             }
+            // Undo this thread's reservation so num_per_cell ends up holding the
+            // number of particles actually *stored* in the row, not the number
+            // that wanted in. find_neighbors_kernel below trusts it as a loop
+            // bound, so an unclamped count would walk off the end of the row
+            // into the next cell's entries (or past the allocation entirely).
+            //
+            // This cannot hand a later thread a duplicate in-range slot: the
+            // counter is only ever decremented by a thread whose reservation was
+            // already >= particles_per_cell, which restores it to that same
+            // >= particles_per_cell value. So once the count reaches capacity it
+            // never dips below it, and every subsequent reservation is dropped.
+            atomicSub(&num_per_cell[occ_idx], 1);
             continue;
         }
         particles_in_cell[occ_idx * particles_per_cell + slot] = i;
@@ -103,7 +115,11 @@ __global__ void find_neighbors_kernel(
                 if (nx >= 0 && nx < grid_size_x && ny >= 0 && ny < grid_size_y) {
                     int occ_idx = collision_grid[nx * grid_size_y + ny];
                     if (occ_idx >= 0) {
-                        int count = num_per_cell[occ_idx];
+                        // fill_cells_kernel already clamps num_per_cell to
+                        // particles_per_cell; the min is a belt-and-braces guard
+                        // that states the invariant where it actually matters,
+                        // since exceeding it here reads outside the row.
+                        int count = min(num_per_cell[occ_idx], particles_per_cell);
                         for (int slot = 0; slot < count; ++slot) {
                             int j = particles_in_cell[occ_idx * particles_per_cell + slot];
                             if (j != i) {

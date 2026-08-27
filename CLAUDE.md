@@ -88,15 +88,14 @@ The collision grid (`collision_grid_size_x × collision_grid_size_y`, default 32
 
 - **`collision_grid`** (`collision_grid_size_x*collision_grid_size_y` ints): `collision_grid[cell_x * collision_grid_size_y + cell_y]` is -1 if the cell is empty, or a compact *occupied-cell index* (0-based) if at least one particle landed there this step.
 - **`particles_in_cell`** (n×k ints): row `occ_idx` (of width `particles_per_cell`) lists the particle indices in that occupied cell. Memory is O(n·k) rather than O(collision_grid_size_x*collision_grid_size_y·k).
-- **`num_per_cell`** (n ints): `num_per_cell[occ_idx]` is the particle count for occupied cell `occ_idx`. Also used as an atomic slot counter during the fill pass.
+- **`num_per_cell`** (n ints): `num_per_cell[occ_idx]` is the count of particles actually *stored* in occupied cell `occ_idx` -- clamped to `particles_per_cell`, never larger. Also used as an atomic slot counter during the fill pass.
 - **`num_occupied_cells`** (1 int): device-side counter, atomically incremented during the compact pass to assign occ_idx values.
 
 `FindNeighborsKernel::call_kernel` does four launches per step (three `cudaMemset` resets first):
 
 1. **`mark_cells_kernel`** (n threads): each particle does `atomicCAS(&collision_grid[cell_index], -1, 1)` to mark its cell as occupied. No index assignment yet, so no spin-waiting is needed.
 2. **`compact_cells_kernel`** (`collision_grid_size_x*collision_grid_size_y` threads): each thread owns one cell; if `collision_grid[c] == 1`, assigns `collision_grid[c] = atomicAdd(num_occupied_cells, 1)`. Produces unique compact indices. Single-writer per cell → no race on the store.
-3. **`fill_cells_kernel`** (n threads): each particle reads its cell's occ_idx, atomically gets a slot via `atomicAdd(&num_per_cell[occ_idx], 1)`, and writes `particles_in_cell[occ_idx * k + slot] = i` — unless `slot >= particles_per_cell` (cell over capacity), in which case the particle is dropped from this step's neighbor search instead of writing out of bounds, and the cell is flagged in `cell_overflowed` (deduped via `atomicCAS` so a cell with many excess particles still only counts once) with the count accumulated into `num_overflowed_cells`. This replaces an earlier `assert(slot < particles_per_cell)`, which used to print once per dropped particle (thousands of lines under a bad `dt`) before `CUDA_CHECK`'s `cudaDeviceSynchronize()` check aborted the process. `num_overflowed_cells` is a **lifetime** counter (not reset per frame, unlike everything else here) so callers can poll it occasionally via `FindNeighborsKernel::overflow_count()` / `ParticleDynamics::grid_overflow_count()` without a host sync every step — `stability_and_accuracy.cpp`'s `check_grid_overflow()` and `broadcast.cpp`'s `"run"` handler both poll it (once per sweep-loop checkpoint / once per `steps_per_frame` batch, respectively) and print one clean message + `exit(1)` instead of a device-assert flood.
-4. **`find_neighbors_kernel`** (n threads): walks the 3×3 stencil (bounds-checked against `collision_grid_size_x`/`collision_grid_size_y` independently), reads occ_idx from `collision_grid` (-1 → skip), iterates `particles_in_cell[occ_idx*k .. +num_per_cell[occ_idx]-1]`, writes found neighbors (excluding self) into `device_neighbors`, terminated by a `-1` sentinel.
+3. **`fill_cells_kernel`** (n threads): each particle reads its cell's occ_idx, atomically gets a slot via `atomicAdd(&num_per_cell[occ_idx], 1)`, and writes `particles_in_cell[occ_idx * k + slot] = i` — unless `slot >= particles_per_cell` (cell over capacity), in which case the particle is dropped from this step's neighbor search instead of writing out of bounds, its reservation is `atomicSub`'d back so `num_per_cell` stays clamped to `particles_per_cell` (see "Known issues"), and the cell is flagged in `cell_overflowed` (deduped via `atomicCAS` so a cell with many excess particles still only counts once) with the count accumulated into `num_overflowed_cells`. This replaces an earlier `assert(slot < particles_per_cell)`, which used to print once per dropped particle (thousands of lines under a bad `dt`) before `CUDA_CHECK`'s `cudaDeviceSynchronize()` check aborted the process. `num_overflowed_cells` is a **lifetime** counter (not reset per frame, unlike everything else here) so callers can poll it occasionally via `FindNeighborsKernel::overflow_count()` / `ParticleDynamics::grid_overflow_count()` without a host sync every step — `stability_and_accuracy.cpp`'s `check_grid_overflow()` and `broadcast.cpp`'s `"run"` handler both poll it (once per sweep-loop checkpoint / once per `steps_per_frame` batch, respectively) and print one clean message + `exit(1)` instead of a device-assert flood.
 
 `ComputeRHSKernel` only ever reads `device_neighbors` (owned by `ParticleDynamics`, sized `n*9*particles_per_cell`) — it has no knowledge of the collision grid. Verify changes with `compute-sanitizer --tool racecheck` (atomic slot increments in fill pass) and `--tool initcheck` (`device_neighbors` read/write).
 
@@ -129,6 +128,13 @@ undone by someone reading old notes:
   Makefile `-include`s the generated `build/obj/*.d`. Editing a widely-included header rebuilds exactly
   the objects that include it, so `make clean` is no longer required after a header change. Verified by
   touching `particle_dynamics.h` and confirming only `particle_dynamics.o` and `profiling_sim.o` rebuild.
+- **`num_per_cell` is now clamped.** `fill_cells_kernel` `atomicSub`s its reservation back when
+  `slot >= particles_per_cell`, so the counter reflects particles actually *stored* rather than
+  particles that wanted in, and `find_neighbors_kernel` additionally `min`s the loop bound against
+  `particles_per_cell`. Covered by `ParticleDynamicsTest.GridOverflowIsCountedAndStaysInBounds`, which
+  forces the path with a 1x1 grid and `particles_per_cell = 2`. Negative control: reverting either half
+  makes `compute-sanitizer --tool memcheck ./build/bin/test` report 2 out-of-bounds errors, so the test
+  genuinely covers the regression rather than merely passing.
 
 ## GPU verification
 
