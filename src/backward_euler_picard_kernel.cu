@@ -6,14 +6,13 @@ __global__ void backward_euler_picard_kernel(float* state, const float* state_n,
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = index; i < n; i += stride) {
-        // v^{n+1}_{k+1} = v^n + dt * a(x^{n+1}_k)
-        const float vx_new = state_n[4*i + 2] + dt * rhs[4*i + 2];
-        const float vy_new = state_n[4*i + 3] + dt * rhs[4*i + 3];
-        state[4*i + 2] = vx_new;
-        state[4*i + 3] = vy_new;
-        // x^{n+1}_{k+1} = x^n + dt * v^{n+1}_{k+1}
-        state[4*i + 0] = state_n[4*i + 0] + dt * vx_new;
-        state[4*i + 1] = state_n[4*i + 1] + dt * vy_new;
+        for (int a = 0; a < kDim; ++a) {
+            // v^{n+1}_{k+1} = v^n + dt * a(x^{n+1}_k)
+            const float v_new = state_n[kStateStride*i + kDim + a] + dt * rhs[kStateStride*i + kDim + a];
+            state[kStateStride*i + kDim + a] = v_new;
+            // x^{n+1}_{k+1} = x^n + dt * v^{n+1}_{k+1}
+            state[kStateStride*i + a] = state_n[kStateStride*i + a] + dt * v_new;
+        }
     }
 }
 

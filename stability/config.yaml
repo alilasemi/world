@@ -12,6 +12,7 @@ simulation:
   dt: 0.0001
   collision_grid_size_x: 200
   collision_grid_size_y: 200
+  collision_grid_size_z: 200
   particles_per_cell: 1000
   threads_per_block: 256
 
@@ -22,15 +23,19 @@ domain:
   x_max: 1.0
   y_min: -1.0
   y_max: 1.0
+  z_min: -1.0
+  z_max: 1.0
 
 physics:
   gravity: 9.81
   particle_radius: 0.005
   max_force: 8
-  floor_y: -1.0
-  ceiling_y: 1.0
-  left_wall_x: -1.0
-  right_wall_x: 1.0
+  floor_z: -1.0
+  ceiling_z: 1.0
+  wall_x_min: -1.0
+  wall_x_max: 1.0
+  wall_y_min: -1.0
+  wall_y_max: 1.0
   # Target coefficient of restitution for the linear spring-dashpot contact
   # model (0 = fully inelastic/critically damped, 1 = perfectly elastic/no
   # damping). See the restitution_to_damping() comment in
@@ -45,6 +50,7 @@ initialization:
   type: cube                 # "cube" or "two_particles"
   x0: -0.5
   y0: -0.5
+  z0: -0.5
   # cube: rectangular grid of "snow" particles plus one "sled" particle on top.
   # Particle spacing is derived from physics.particle_radius.
   cube_length_x: 1.0

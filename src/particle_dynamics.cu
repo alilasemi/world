@@ -13,6 +13,7 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     // Pull the scalar grid/timestep settings out of the config.
     collision_grid_size_x = config.collision_grid_size_x;
     collision_grid_size_y = config.collision_grid_size_y;
+    collision_grid_size_z = config.collision_grid_size_z;
     particles_per_cell = config.particles_per_cell;
     dt = config.dt;
 
@@ -20,18 +21,19 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     if (config.init_type == "two_particles") {
         initialize_to_two_particles(config.init_x0, config.init_y0);
     } else if (config.init_type == "single_particle") {
-        initialize_to_single_particle(config.init_x0, config.init_y0);
+        initialize_to_single_particle(config.init_x0, config.init_y0, config.init_z0);
     } else {
-        initialize_to_cube(config.init_x0, config.init_y0);
+        initialize_to_cube(config.init_x0, config.init_y0, config.init_z0);
     }
     // Copy to device
     device_state.copy_from_host(host_state);
     device_material.copy_from_host(host_material);
     unpack_state();
 
-    // 9 = 3x3 stencil cell count; FindNeighborsKernel owns the dense
-    // collision grid privately and writes results as a flat n*9*k neighbor array.
-    device_neighbors = DeviceVector<int>(static_cast<size_t>(n) * 9 * static_cast<size_t>(particles_per_cell));
+    // FindNeighborsKernel owns the dense collision grid privately and writes
+    // results as a flat n*kStencilCells*k neighbor array (27 cells in 3D).
+    device_neighbors = DeviceVector<int>(
+            static_cast<size_t>(n) * kStencilCells * static_cast<size_t>(particles_per_cell));
 
     time = 0.0f;
     last_time = 0.0f;
@@ -47,12 +49,13 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     }
     device_mass.copy_from_host(host_mass);
 
-    device_state_n = DeviceVector<float>(4 * n);
+    device_state_n = DeviceVector<float>(kStateStride * n);
 
     // Create CUDA kernels
     const bool kt = config.kernel_timing;
     find_neighbors_kernel = std::make_unique<FindNeighborsKernel>(
-            device_state.data(), n, collision_grid_size_x, collision_grid_size_y, particles_per_cell,
+            device_state.data(), n, collision_grid_size_x, collision_grid_size_y,
+            collision_grid_size_z, particles_per_cell,
             config.domain, config.threads_per_block, device_neighbors.data(), kt);
     compute_rhs_kernel = std::make_unique<ComputeRHSKernel>(device_state.data(), device_material.data(),
             device_mass.data(), device_neighbors.data(),
@@ -71,11 +74,11 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
 
 void ParticleDynamics::resize(const int new_n) {
     n = new_n;
-    xy = std::vector<float>(2*n);
+    positions = std::vector<float>(kDim * n);
 
-    host_state = HostVector<float>(4 * n);
-    device_state = DeviceVector<float>(4 * n);
-    device_rhs = DeviceVector<float>(4 * n);
+    host_state = HostVector<float>(kStateStride * n);
+    device_state = DeviceVector<float>(kStateStride * n);
+    device_rhs = DeviceVector<float>(kStateStride * n);
     host_material = HostVector<int>(n);
     device_material = DeviceVector<int>(n);
 }
@@ -90,9 +93,9 @@ void ParticleDynamics::unpack_state() {
     host_state.copy_from_device(device_state);
 
     for (size_t i = 0; i < n; ++i) {
-//        printf("Particle %lu: host_state = (%.2f, %.2f, %.2f, %.2f)\n", i, host_state[4 * i + 0], host_state[4 * i + 1], host_state[4 * i + 2], host_state[4 * i + 3]);
-        xy[2*i + 0] = host_state[4 * i + 0];
-        xy[2*i + 1] = host_state[4 * i + 1];
+        for (int a = 0; a < kDim; ++a) {
+            positions[kDim*i + a] = host_state[kStateStride * i + a];
+        }
     }
     stop_timer(time_unpack_state);
     real_time_ratio = get_real_time_ratio();
@@ -100,42 +103,38 @@ void ParticleDynamics::unpack_state() {
 
 
 
-void ParticleDynamics::initialize_to_two_particles(const float x0, const float y0) {
+void ParticleDynamics::initialize_to_two_particles(const float x0, const float y0, const float z0) {
+    // Separated along z (the gravity axis), so the pair stacks vertically just
+    // as it did when y was up in the 2D version.
     const float separation = config.two_particle_separation;
-    printf("Initializing to two particles at (%.2f, %.2f) and (%.2f, %.2f)...\n", x0, y0, x0, y0 + separation);
+    printf("Initializing to two particles at (%.2f, %.2f, %.2f) and (%.2f, %.2f, %.2f)...\n",
+            x0, y0, z0, x0, y0, z0 + separation);
     resize(2);
 
-    printf("Resized to %d particles.\n", n);
-    host_state[0] = x0;
-    host_state[1] = y0;
-    host_state[2] = 0.0f;
-    host_state[3] = 0.0f;
-
-    printf("Initialized first particle at (%.2f, %.2f).\n", host_state[0], host_state[1]);
-    host_state[4] = x0;
-    host_state[5] = y0 + separation;
-    host_state[6] = 0.0f;
-    host_state[7] = 0.0f;
+    const float p0[kStateStride] = {x0, y0, z0,                0.f, 0.f, 0.f};
+    const float p1[kStateStride] = {x0, y0, z0 + separation,   0.f, 0.f, 0.f};
+    for (int a = 0; a < kStateStride; ++a) {
+        host_state[a] = p0[a];
+        host_state[kStateStride + a] = p1[a];
+    }
 
     host_material[0] = config.particle_material;
     host_material[1] = config.particle_material;
-
-    printf("Initialized second particle at (%.2f, %.2f).\n", host_state[4],
-            host_state[5]);
 }
 
 
-void ParticleDynamics::initialize_to_single_particle(const float x0, const float y0) {
+void ParticleDynamics::initialize_to_single_particle(const float x0, const float y0, const float z0) {
     const float vx0 = config.init_vx0;
     const float vy0 = config.init_vy0;
-    printf("Initializing to a single particle at (%.2f, %.2f) with velocity (%.2f, %.2f)...\n",
-            x0, y0, vx0, vy0);
+    const float vz0 = config.init_vz0;
+    printf("Initializing to a single particle at (%.2f, %.2f, %.2f) with velocity (%.2f, %.2f, %.2f)...\n",
+            x0, y0, z0, vx0, vy0, vz0);
     resize(1);
 
-    host_state[0] = x0;
-    host_state[1] = y0;
-    host_state[2] = vx0;
-    host_state[3] = vy0;
+    const float p[kStateStride] = {x0, y0, z0, vx0, vy0, vz0};
+    for (int a = 0; a < kStateStride; ++a) {
+        host_state[a] = p[a];
+    }
 
     host_material[0] = config.particle_material;
 }
@@ -208,7 +207,7 @@ void ParticleDynamics::take_step() {
         (*semi_implicit_euler_kernel)();
     } else {
         CUDA_CHECK(cudaMemcpy(device_state_n.data(), device_state.data(),
-                4 * n * sizeof(float), cudaMemcpyDeviceToDevice));
+                kStateStride * n * sizeof(float), cudaMemcpyDeviceToDevice));
         for (int k = 0; k < config.picard_iterations; ++k) {
             (*find_neighbors_kernel)();
             (*compute_rhs_kernel)();
@@ -229,12 +228,14 @@ float ParticleDynamics::compute_total_energy() {
 bool ParticleDynamics::is_stable() {
     host_state.copy_from_device(device_state);
     const DomainParams& d = config.domain;
+    const float lo[kDim] = {d.x_min, d.y_min, d.z_min};
+    const float hi[kDim] = {d.x_max, d.y_max, d.z_max};
     for (int i = 0; i < n; ++i) {
-        const float x = host_state[4 * i + 0];
-        const float y = host_state[4 * i + 1];
-        if (!std::isfinite(x) || !std::isfinite(y) ||
-                x < d.x_min || x > d.x_max || y < d.y_min || y > d.y_max) {
-            return false;
+        for (int a = 0; a < kDim; ++a) {
+            const float p = host_state[kStateStride * i + a];
+            if (!std::isfinite(p) || p < lo[a] || p > hi[a]) {
+                return false;
+            }
         }
     }
     return true;
@@ -246,9 +247,12 @@ float ParticleDynamics::compute_max_acceleration() {
     host_rhs.copy_from_device(device_rhs);
     float max_accel = 0.0f;
     for (int i = 0; i < n; ++i) {
-        const float ax = host_rhs[4 * i + 2];
-        const float ay = host_rhs[4 * i + 3];
-        const float accel = std::sqrt(ax * ax + ay * ay);
+        float accel_sq = 0.f;
+        for (int a = 0; a < kDim; ++a) {
+            const float acc = host_rhs[kStateStride * i + kDim + a];
+            accel_sq += acc * acc;
+        }
+        const float accel = std::sqrt(accel_sq);
         if (accel > max_accel) {
             max_accel = accel;
         }

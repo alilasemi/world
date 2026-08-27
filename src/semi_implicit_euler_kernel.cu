@@ -6,10 +6,12 @@ __global__ void semi_implicit_euler_kernel(float* state, const float* rhs, size_
     int stride = blockDim.x * gridDim.x;
     for (int i = index; i < n; i += stride) {
         // Update velocity, then update position using the new velocity
-        state[4*i + 2] += dt * rhs[4*i + 2];
-        state[4*i + 3] += dt * rhs[4*i + 3];
-        state[4*i + 0] += dt * state[4*i + 2];
-        state[4*i + 1] += dt * state[4*i + 3];
+        for (int a = 0; a < kDim; ++a) {
+            state[kStateStride*i + kDim + a] += dt * rhs[kStateStride*i + kDim + a];
+        }
+        for (int a = 0; a < kDim; ++a) {
+            state[kStateStride*i + a] += dt * state[kStateStride*i + kDim + a];
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <cuda_runtime.h>
 #include "kernel.h"
+#include "sim_config.h"  // kDim / kStateStride: the state layout these integrators walk
 
 class SemiImplicitEulerKernel : public Kernel {
 public:

@@ -8,27 +8,36 @@
 
 simulation:
   dt: 0.001
-  collision_grid_size_x: 1000
-  collision_grid_size_y: 500
+  # Cells are sized to roughly one particle diameter (2*radius = 0.02 across a
+  # 2.0-wide domain -> 100 cells/axis), which is what keeps particles_per_cell
+  # small. See CLAUDE.md on why inflating particles_per_cell costs throughput.
+  collision_grid_size_x: 100
+  collision_grid_size_y: 100
+  collision_grid_size_z: 100
   particles_per_cell: 8
   threads_per_block: 256
 
 # Simulation domain bounds. Particles are mapped into grid cells across this
-# range; it need not be the historical [-1, 1] x [-1, 1].
+# range; it need not be the historical [-1, 1] cube.
 domain:
-  x_min: -10.0
-  x_max:  10.0
-  y_min: -5.0
-  y_max:  5.0
+  x_min: -1.0
+  x_max:  1.0
+  y_min: -1.0
+  y_max:  1.0
+  z_min: -1.0
+  z_max:  1.0
 
 physics:
   gravity: 9.81
   particle_radius: 0.01
   max_force: 2000.0
-  left_wall_x:  -10.0
-  right_wall_x:  10.0
-  floor_y:      -5.0
-  ceiling_y:     5.0
+  # z is up: floor/ceiling are the z walls, the other four are the sides.
+  floor_z:    -1.0
+  ceiling_z:   1.0
+  wall_x_min: -1.0
+  wall_x_max:  1.0
+  wall_y_min: -1.0
+  wall_y_max:  1.0
   # Target coefficient of restitution for the linear spring-dashpot contact
   # model (0 = fully inelastic/critically damped, 1 = perfectly elastic/no
   # damping). See the restitution_to_damping() comment in
@@ -53,7 +62,7 @@ initialization:
   sled_vy: 0.0
   sled_material: 2
   particle_material: 1
-  # two_particles: vertical offset between the two particles.
+  # two_particles: offset between the two particles, along z.
   two_particle_separation: 0.1
 
 rendering:

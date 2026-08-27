@@ -54,22 +54,24 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
     int stride = blockDim.x * gridDim.x;
 
     const float g = physics.gravity;
-    const float floor_y = physics.floor_y;
-    const float ceiling_y = physics.ceiling_y;
-    const float left_wall_x = physics.left_wall_x;
-    const float right_wall_x = physics.right_wall_x;
     const float max_force = physics.max_force;
     const float radius = physics.particle_radius;
     const float restitution = physics.restitution;
     const float spring_k = max_force / radius;  // linear spring constant, pre-clamp
-    int row_stride = 9 * particles_per_cell;
+    // The six boundaries, indexed by axis so the wall loop below can treat them
+    // uniformly: lower[a] / upper[a] bound axis a. z is up (gravity is -z), so
+    // lower[2]/upper[2] are the floor and ceiling.
+    const float lower[kDim] = {physics.wall_x_min, physics.wall_y_min, physics.floor_z};
+    const float upper[kDim] = {physics.wall_x_max, physics.wall_y_max, physics.ceiling_z};
+    int row_stride = kStencilCells * particles_per_cell;
     for (int i = index; i < n; i += stride) {
-        const float x = state[4 * i + 0];
-        const float y = state[4 * i + 1];
-        const float vx = state[4 * i + 2];
-        const float vy = state[4 * i + 3];
-        float force_x = 0;
-        float force_y = 0;
+        float pos[kDim];
+        float vel[kDim];
+        for (int a = 0; a < kDim; ++a) {
+            pos[a] = state[kStateStride * i + a];
+            vel[a] = state[kStateStride * i + kDim + a];
+        }
+        float force[kDim] = {0.f, 0.f, 0.f};
         const size_t mat = material[i];
         const float m_i = mass[mat];
         // Fixed boundaries (floor/ceiling/walls) are the infinite-mass limit
@@ -77,29 +79,29 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         // own mass -- see restitution_to_damping() above.
         const float c_wall = restitution_to_damping(restitution, spring_k, m_i);
 
-        // Gravity
-        force_y -= m_i * g;
+        // Gravity acts along -z.
+        force[2] -= m_i * g;
 
-        // Floor force
-        float floor_dist = y - floor_y - radius;
-        float floor_force = max(0.f, min(max_force, -max_force / radius * floor_dist));
-        force_y += floor_force; // Repulsive force
-        if (floor_dist < 0.f) force_y -= c_wall * vy; // Damping, contact-only
-        // Ceiling force
-        float ceiling_dist = ceiling_y - y - radius;
-        float ceiling_force = max(0.f, min(max_force, -max_force / radius * ceiling_dist));
-        force_y -= ceiling_force; // Repulsive force
-        if (ceiling_dist < 0.f) force_y -= c_wall * vy; // Damping, contact-only
-        // Wall on the left
-        float wall_dist_left = x - left_wall_x - radius;
-        float left_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_left));
-        force_x += left_wall_force; // Repulsive force
-        if (wall_dist_left < 0.f) force_x -= c_wall * vx; // Damping, contact-only
-        // Wall on the right
-        float wall_dist_right = right_wall_x - x - radius;
-        float right_wall_force = max(0.f, min(max_force, -max_force / radius * wall_dist_right));
-        force_x -= right_wall_force; // Repulsive force
-        if (wall_dist_right < 0.f) force_x -= c_wall * vx; // Damping, contact-only
+        // The six fixed boundaries. Each axis has a lower wall pushing in the
+        // +axis direction and an upper wall pushing in -axis; the spring and
+        // contact-only dashpot are identical to the 2D version, just applied
+        // per axis instead of being written out four times.
+        for (int a = 0; a < kDim; ++a) {
+
+            const float dist_lower = pos[a] - lower[a] - radius;
+            const float f_lower = max(0.f, min(max_force, -max_force / radius * dist_lower));
+            force[a] += f_lower;
+            if (dist_lower < 0.f) {
+                force[a] -= c_wall * vel[a];
+            }
+
+            const float dist_upper = upper[a] - pos[a] - radius;
+            const float f_upper = max(0.f, min(max_force, -max_force / radius * dist_upper));
+            force[a] -= f_upper;
+            if (dist_upper < 0.f) {
+                force[a] -= c_wall * vel[a];
+            }
+        }
 
         // Particle-particle interactions, from the flat neighbor list that
         // FindNeighborsKernel already computed via the spatial grid.
@@ -107,39 +109,40 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         for (int k = 0; k < row_stride; ++k) {
             int j = neighbors[base + k];
             if (j < 0) break; // sentinel: no more neighbors for this particle
-            const float x_j = state[4 * j + 0];
-            const float y_j = state[4 * j + 1];
-            const float vx_j = state[4 * j + 2];
-            const float vy_j = state[4 * j + 3];
-            const float dx = x - x_j;
-            const float dy = y - y_j;
-            const float norm = sqrtf(dx * dx + dy * dy);
+            float delta[kDim];
+            float norm_sq = 0.f;
+            for (int a = 0; a < kDim; ++a) {
+                delta[a] = pos[a] - state[kStateStride * j + a];
+                norm_sq += delta[a] * delta[a];
+            }
+            const float norm = sqrtf(norm_sq);
             const float dist = norm - radius - radius;
             const size_t mat_j = material[j];
-            // Repulsive force
-            float force = max(0.f, min(max_force, -max_force / radius * dist));
-            force_y += force * (dy / norm);
-            force_x += force * (dx / norm);
-            // Damping based on relative velocity, contact-only, using the
-            // two-body reduced mass (m_i*m_j / (m_i+m_j)) so the same
-            // restitution target is met regardless of the mass ratio.
+            // Unit normal along the line of centers.
+            float normal[kDim];
+            for (int a = 0; a < kDim; ++a) {
+                normal[a] = delta[a] / norm;
+            }
+            // Repulsive spring along the normal.
+            const float f_pair = max(0.f, min(max_force, -max_force / radius * dist));
+            for (int a = 0; a < kDim; ++a) {
+                force[a] += f_pair * normal[a];
+            }
             if (dist < 0.f) {
+                // Dashpot uses the two-body reduced mass (m_i*m_j / (m_i+m_j))
+                // so the restitution target is met regardless of mass ratio.
                 const float m_j = mass[mat_j];
                 const float m_sum = m_i + m_j;
                 const float m_reduced = (m_sum > 0.f) ? (m_i * m_j) / m_sum : 0.f;
                 const float c_pair = restitution_to_damping(restitution, spring_k, m_reduced);
-                force_x -= c_pair * (vx - vx_j);
-                force_y -= c_pair * (vy - vy_j);
             }
         }
 
-        const float ax = force_x / mass[mat];
-        const float ay = force_y / mass[mat];
-
-        rhs[4 * i + 0] = vx; // dx/dt = vx
-        rhs[4 * i + 1] = vy; // dy/dt = vy
-        rhs[4 * i + 2] = ax; // dvx/dt = ax
-        rhs[4 * i + 3] = ay; // dvy/dt = ay
+        // dx/dt = v, dv/dt = F/m
+        for (int a = 0; a < kDim; ++a) {
+            rhs[kStateStride * i + a] = vel[a];
+            rhs[kStateStride * i + kDim + a] = force[a] / mass[mat];
+        }
     }
 }
 

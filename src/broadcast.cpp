@@ -34,9 +34,10 @@ int main(int argc, char** argv) {
                     const char* size_data = reinterpret_cast<const char*>(&size);
                     size_t length = sizeof(size);
                     ws->send(std::string_view(size_data, length), uWS::OpCode::BINARY);
-                    // Send collision grid size (x then y, one message) so the
-                    // client can draw the collision-grid overlay.
-                    int32_t collision_grid_size[2] = {sim->collision_grid_size_x, sim->collision_grid_size_y};
+                    // Send collision grid size (x, y, then z in one message) so
+                    // the client can draw the collision-grid / domain overlay.
+                    int32_t collision_grid_size[3] = {sim->collision_grid_size_x,
+                            sim->collision_grid_size_y, sim->collision_grid_size_z};
                     ws->send(std::string_view(reinterpret_cast<const char*>(collision_grid_size),
                             sizeof(collision_grid_size)), uWS::OpCode::BINARY);
                     // Send rendering constants (only at initialize, never per frame):
@@ -50,18 +51,20 @@ int main(int argc, char** argv) {
                     const char* radius_data = reinterpret_cast<const char*>(&particle_radius);
                     length = sizeof(particle_radius);
                     ws->send(std::string_view(radius_data, length), uWS::OpCode::BINARY);
-                    // Send domain bounds so the client can count how many particles
-                    // are currently inside vs. the total (same bounds is_stable()
-                    // checks server-side). One message, 4 floats: x_min/x_max/y_min/y_max.
-                    const float domain_bounds[4] = {
+                    // Send domain bounds so the client can build its view volume
+                    // and count how many particles are currently inside vs. the
+                    // total (same bounds is_stable() checks server-side). One
+                    // message, 6 floats: x_min/x_max/y_min/y_max/z_min/z_max.
+                    const float domain_bounds[6] = {
                         sim->config.domain.x_min, sim->config.domain.x_max,
                         sim->config.domain.y_min, sim->config.domain.y_max,
+                        sim->config.domain.z_min, sim->config.domain.z_max,
                     };
                     ws->send(std::string_view(reinterpret_cast<const char*>(domain_bounds),
                             sizeof(domain_bounds)), uWS::OpCode::BINARY);
-                    // Send state vector, sim.xy, which is vector<float>
-                    const char* state_data = reinterpret_cast<const char*>(sim->xy.data());
-                    length = sim->xy.size() * sizeof(float);
+                    // Send the initial positions (kDim floats per particle).
+                    const char* state_data = reinterpret_cast<const char*>(sim->positions.data());
+                    length = sim->positions.size() * sizeof(float);
                     ws->send(std::string_view(state_data, length), uWS::OpCode::BINARY);
                 } else if (message == "run") {
                     // Kernel::wall_clock_time() is a lifetime accumulator, so
@@ -89,20 +92,20 @@ int main(int argc, char** argv) {
                     float t_rhs   = sim->compute_rhs_wct()   - rhs0;
                     float t_step  = sim->take_step_wct()  - step0;
                     sim->unpack_state();
-                    // Pack xy + metadata into one buffer.
-                    // Layout: [n*2 xy floats | sim_time | real_time_ratio |
+                    // Pack positions + metadata into one buffer.
+                    // Layout: [n*kDim position floats | sim_time | real_time_ratio |
                     //          t_find_neighbors | t_compute_rhs | t_take_step |
                     //          t_unpack_state]
                     // All times are in milliseconds.
-                    const size_t n_xy = sim->xy.size();
-                    std::vector<float> payload(n_xy + 6);
-                    std::copy(sim->xy.begin(), sim->xy.end(), payload.begin());
-                    payload[n_xy + 0] = sim->time;
-                    payload[n_xy + 1] = sim->real_time_ratio;
-                    payload[n_xy + 2] = t_find;
-                    payload[n_xy + 3] = t_rhs;
-                    payload[n_xy + 4] = t_step;
-                    payload[n_xy + 5] = sim->time_unpack_state;
+                    const size_t n_pos = sim->positions.size();
+                    std::vector<float> payload(n_pos + 6);
+                    std::copy(sim->positions.begin(), sim->positions.end(), payload.begin());
+                    payload[n_pos + 0] = sim->time;
+                    payload[n_pos + 1] = sim->real_time_ratio;
+                    payload[n_pos + 2] = t_find;
+                    payload[n_pos + 3] = t_rhs;
+                    payload[n_pos + 4] = t_step;
+                    payload[n_pos + 5] = sim->time_unpack_state;
 
                     const char* state_data = reinterpret_cast<const char*>(payload.data());
                     size_t length = payload.size() * sizeof(float);

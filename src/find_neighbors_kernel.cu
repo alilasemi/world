@@ -16,6 +16,28 @@ __device__ inline int cell_index_y(float y, DomainParams domain, int grid_size_y
     return min(grid_size_y - 1, max(0, static_cast<int>(
             (y - domain.y_min) / (domain.y_max - domain.y_min) * grid_size_y)));
 }
+__device__ inline int cell_index_z(float z, DomainParams domain, int grid_size_z) {
+    return min(grid_size_z - 1, max(0, static_cast<int>(
+            (z - domain.z_min) / (domain.z_max - domain.z_min) * grid_size_z)));
+}
+
+// Flatten a 3D cell coordinate into the dense collision_grid index. x is the
+// slowest-varying axis and z the fastest, so cells adjacent in z (the gravity
+// axis, along which particles stack) are adjacent in memory.
+__device__ inline int flat_cell(int cell_x, int cell_y, int cell_z,
+        int grid_size_y, int grid_size_z) {
+    return (cell_x * grid_size_y + cell_y) * grid_size_z + cell_z;
+}
+
+// Every particle's cell, in one place -- all four passes derive it identically
+// from the same state, so a discrepancy here would silently desync the passes.
+__device__ inline int particle_cell(const float* state, int i, DomainParams domain,
+        int grid_size_x, int grid_size_y, int grid_size_z) {
+    const int cell_x = cell_index_x(state[kStateStride*i + 0], domain, grid_size_x);
+    const int cell_y = cell_index_y(state[kStateStride*i + 1], domain, grid_size_y);
+    const int cell_z = cell_index_z(state[kStateStride*i + 2], domain, grid_size_z);
+    return flat_cell(cell_x, cell_y, cell_z, grid_size_y, grid_size_z);
+}
 
 
 // Pass 1: mark each cell that contains at least one particle.
@@ -23,13 +45,12 @@ __device__ inline int cell_index_y(float y, DomainParams domain, int grid_size_y
 // no-op. No index assignment yet, so no spin-waiting is needed.
 __global__ void mark_cells_kernel(
         int* collision_grid, const float* state, int n, int grid_size_x, int grid_size_y,
-        DomainParams domain) {
+        int grid_size_z, DomainParams domain) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = index; i < n; i += stride) {
-        int cell_x = cell_index_x(state[4*i+0], domain, grid_size_x);
-        int cell_y = cell_index_y(state[4*i+1], domain, grid_size_y);
-        atomicCAS(&collision_grid[cell_x * grid_size_y + cell_y], -1, 1);
+        atomicCAS(&collision_grid[particle_cell(state, i, domain,
+                grid_size_x, grid_size_y, grid_size_z)], -1, 1);
     }
 }
 
@@ -60,14 +81,13 @@ __global__ void compact_cells_kernel(
 __global__ void fill_cells_kernel(
         const int* collision_grid, int* particles_in_cell, int* num_per_cell,
         int* cell_overflowed, int* num_overflowed_cells,
-        const float* state, int n, int grid_size_x, int grid_size_y, int particles_per_cell,
-        DomainParams domain) {
+        const float* state, int n, int grid_size_x, int grid_size_y, int grid_size_z,
+        int particles_per_cell, DomainParams domain) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = index; i < n; i += stride) {
-        int cell_x = cell_index_x(state[4*i+0], domain, grid_size_x);
-        int cell_y = cell_index_y(state[4*i+1], domain, grid_size_y);
-        int occ_idx = collision_grid[cell_x * grid_size_y + cell_y];
+        int occ_idx = collision_grid[particle_cell(state, i, domain,
+                grid_size_x, grid_size_y, grid_size_z)];
         int slot = atomicAdd(&num_per_cell[occ_idx], 1);
         if (slot >= particles_per_cell) {
             if (atomicCAS(&cell_overflowed[occ_idx], 0, 1) == 0) {
@@ -99,21 +119,25 @@ __global__ void fill_cells_kernel(
 __global__ void find_neighbors_kernel(
         const int* collision_grid, const int* particles_in_cell, const int* num_per_cell,
         const float* state, int* neighbors, int n, int grid_size_x, int grid_size_y,
-        int particles_per_cell, DomainParams domain) {
+        int grid_size_z, int particles_per_cell, DomainParams domain) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
-    int row_stride = 9 * particles_per_cell;
+    int row_stride = kStencilCells * particles_per_cell;
     for (int i = index; i < n; i += stride) {
-        int cell_x = cell_index_x(state[4*i+0], domain, grid_size_x);
-        int cell_y = cell_index_y(state[4*i+1], domain, grid_size_y);
+        int cell_x = cell_index_x(state[kStateStride*i + 0], domain, grid_size_x);
+        int cell_y = cell_index_y(state[kStateStride*i + 1], domain, grid_size_y);
+        int cell_z = cell_index_z(state[kStateStride*i + 2], domain, grid_size_z);
         int base = i * row_stride;
         int out = 0;
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
+            for (int dz = -1; dz <= 1; ++dz) {
                 int nx = cell_x + dx;
                 int ny = cell_y + dy;
-                if (nx >= 0 && nx < grid_size_x && ny >= 0 && ny < grid_size_y) {
-                    int occ_idx = collision_grid[nx * grid_size_y + ny];
+                int nz = cell_z + dz;
+                if (nx >= 0 && nx < grid_size_x && ny >= 0 && ny < grid_size_y &&
+                        nz >= 0 && nz < grid_size_z) {
+                    int occ_idx = collision_grid[flat_cell(nx, ny, nz, grid_size_y, grid_size_z)];
                     if (occ_idx >= 0) {
                         // fill_cells_kernel already clamps num_per_cell to
                         // particles_per_cell; the min is a belt-and-braces guard
@@ -130,6 +154,7 @@ __global__ void find_neighbors_kernel(
                     }
                 }
             }
+            }
         }
         neighbors[base + out] = -1;
     }
@@ -138,19 +163,21 @@ __global__ void find_neighbors_kernel(
 
 FindNeighborsKernel::FindNeighborsKernel(
         const float* state_, const int n_, const int grid_size_x_, const int grid_size_y_,
-        const int particles_per_cell_, const DomainParams domain_,
+        const int grid_size_z_, const int particles_per_cell_, const DomainParams domain_,
         const int threads_per_block_, int* neighbors_, bool timing_enabled_)
         : Kernel(n_, threads_per_block_, timing_enabled_), state(state_),
-          grid_size_x(grid_size_x_), grid_size_y(grid_size_y_),
+          grid_size_x(grid_size_x_), grid_size_y(grid_size_y_), grid_size_z(grid_size_z_),
           particles_per_cell(particles_per_cell_), domain(domain_), neighbors(neighbors_),
-          collision_grid(static_cast<size_t>(grid_size_x_) * static_cast<size_t>(grid_size_y_)),
+          collision_grid(static_cast<size_t>(grid_size_x_) * static_cast<size_t>(grid_size_y_)
+                  * static_cast<size_t>(grid_size_z_)),
           particles_in_cell(static_cast<size_t>(n_) * particles_per_cell_),
           num_per_cell(static_cast<size_t>(n_)),
           num_occupied_cells(1),
           cell_overflowed(static_cast<size_t>(n_)),
           num_overflowed_cells(1) {
     CUDA_CHECK(cudaMemset(collision_grid.data(), -1,
-            static_cast<size_t>(grid_size_x_) * static_cast<size_t>(grid_size_y_) * sizeof(int)));
+            static_cast<size_t>(grid_size_x_) * static_cast<size_t>(grid_size_y_)
+                    * static_cast<size_t>(grid_size_z_) * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_per_cell.data(), 0,
             static_cast<size_t>(n_) * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_occupied_cells.data(), 0, sizeof(int)));
@@ -163,7 +190,8 @@ FindNeighborsKernel::FindNeighborsKernel(
 void FindNeighborsKernel::call_kernel(int blocks, int threads_per_block) {
     // Reset per-frame state. cudaMemset 0xFF gives all-1-bits = -1 for int.
     CUDA_CHECK(cudaMemset(collision_grid.data(), -1,
-            static_cast<size_t>(grid_size_x) * static_cast<size_t>(grid_size_y) * sizeof(int)));
+            static_cast<size_t>(grid_size_x) * static_cast<size_t>(grid_size_y)
+                    * static_cast<size_t>(grid_size_z) * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_per_cell.data(), 0,
             static_cast<size_t>(n) * sizeof(int)));
     CUDA_CHECK(cudaMemset(num_occupied_cells.data(), 0, sizeof(int)));
@@ -177,9 +205,9 @@ void FindNeighborsKernel::call_kernel(int blocks, int threads_per_block) {
             static_cast<size_t>(n) * sizeof(int)));
 
     mark_cells_kernel<<<blocks, threads_per_block>>>(
-            collision_grid.data(), state, n, grid_size_x, grid_size_y, domain);
+            collision_grid.data(), state, n, grid_size_x, grid_size_y, grid_size_z, domain);
 
-    int num_cells = grid_size_x * grid_size_y;
+    int num_cells = grid_size_x * grid_size_y * grid_size_z;
     int compact_blocks = (num_cells + threads_per_block - 1) / threads_per_block;
     compact_cells_kernel<<<compact_blocks, threads_per_block>>>(
             collision_grid.data(), num_occupied_cells.data(), num_cells);
@@ -187,11 +215,11 @@ void FindNeighborsKernel::call_kernel(int blocks, int threads_per_block) {
     fill_cells_kernel<<<blocks, threads_per_block>>>(
             collision_grid.data(), particles_in_cell.data(), num_per_cell.data(),
             cell_overflowed.data(), num_overflowed_cells.data(),
-            state, n, grid_size_x, grid_size_y, particles_per_cell, domain);
+            state, n, grid_size_x, grid_size_y, grid_size_z, particles_per_cell, domain);
 
     find_neighbors_kernel<<<blocks, threads_per_block>>>(
             collision_grid.data(), particles_in_cell.data(), num_per_cell.data(),
-            state, neighbors, n, grid_size_x, grid_size_y, particles_per_cell, domain);
+            state, neighbors, n, grid_size_x, grid_size_y, grid_size_z, particles_per_cell, domain);
 }
 
 

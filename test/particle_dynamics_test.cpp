@@ -24,34 +24,38 @@ TEST(ParticleDynamicsTest, RunsStablyForFixedIterations) {
 TEST(ParticleDynamicsTest, FreeFallMatchesKinematics) {
     ParticleDynamics sim;
     for (int i = 0; i < sim.n; ++i) {
-        sim.host_state[4 * i + 2] = 0.0f;
-        sim.host_state[4 * i + 3] = 0.0f;
+        for (int a = 0; a < kDim; ++a) {
+            sim.host_state[kStateStride * i + kDim + a] = 0.0f;
+        }
     }
     sim.device_state.copy_from_host(sim.host_state);
-    const float y0 = sim.host_state[1]; // particle 0: bottom-left corner of the cube
+    // Particle 0 is the cube's min corner; z is the gravity axis.
+    const float z0 = sim.host_state[2];
     const int steps = 100;
     for (int i = 0; i < steps; ++i) {
         sim.take_step();
     }
     sim.unpack_state();
     // Symplectic Euler (velocity updated, then position with the new
-    // velocity): x_k = x0 - g*dt^2 * k*(k+1)/2
-    const float expected_dy = -9.81f * sim.dt * sim.dt * static_cast<float>(steps) * static_cast<float>(steps + 1) / 2.0f;
-    EXPECT_NEAR(sim.xy[1] - y0, expected_dy, 1e-6f);
+    // velocity): z_k = z0 - g*dt^2 * k*(k+1)/2
+    const float expected_dz = -9.81f * sim.dt * sim.dt * static_cast<float>(steps) * static_cast<float>(steps + 1) / 2.0f;
+    EXPECT_NEAR(sim.positions[2] - z0, expected_dz, 1e-6f);
 }
 
 TEST(ParticleDynamicsTest, ParticleDoesNotPenetrateFloor) {
     ParticleDynamics sim;
-    sim.host_state[0] = 0.5f;
-    sim.host_state[1] = -0.5f; // isolated, mid-domain
-    sim.host_state[2] = 0.0f;
-    sim.host_state[3] = 0.0f;
+    // Move particle 0 well clear of the cube, then let it fall to the floor.
+    const float start[kStateStride] = {0.5f, 0.5f, -0.5f, 0.0f, 0.0f, 0.0f};
+    for (int a = 0; a < kStateStride; ++a) {
+        sim.host_state[a] = start[a];
+    }
     sim.device_state.copy_from_host(sim.host_state);
     for (int i = 0; i < 20000; ++i) { // dt=1e-4 -> 2s simulated
         sim.take_step();
     }
     sim.unpack_state();
-    EXPECT_GE(sim.xy[1], -1.0f + 0.01f - 1e-3f); // stays at/above floor+radius
+    // Rests at/above floor + radius, along z.
+    EXPECT_GE(sim.positions[2], -1.0f + 0.01f - 1e-3f);
     EXPECT_TRUE(sim.is_stable());
 }
 
@@ -62,7 +66,7 @@ TEST(ParticleDynamicsTest, RepeatedRunsAreDeterministic) {
             sim.take_step();
         }
         sim.unpack_state();
-        out = sim.xy;
+        out = sim.positions;
     };
     std::vector<float> a, b;
     run(a);

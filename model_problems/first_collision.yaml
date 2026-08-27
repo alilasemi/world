@@ -11,14 +11,16 @@ simulation:
 physics:
   gravity: 0.0
   particle_radius: 0.01
-  # floor_y defaults to -1.0 (see domain/physics defaults in sim_config.h).
+  # floor_z defaults to -1.0 (see domain/physics defaults in sim_config.h).
 
 initialization:
   type: single_particle
   x0: 0.0
-  y0: -0.97   # floor_y + 3*radius = -1.0 + 3*0.01
+  y0: 0.0
+  z0: -0.97   # floor_z + 3*radius = -1.0 + 3*0.01 (z is up)
   vx0: 0.0
-  vy0: -10.0  # moving straight down toward the floor
+  vy0: 0.0
+  vz0: -10.0  # moving straight down toward the floor
 
 model_problem:
   sim_time: 0.03

@@ -26,9 +26,13 @@ public:
     float dt;
     int collision_grid_size_x;
     int collision_grid_size_y;
+    int collision_grid_size_z;
     int particles_per_cell;
 
-    std::vector<float> xy;
+    // Positions only (kDim floats per particle), refreshed by unpack_state()
+    // and streamed to the client. Named for what it holds: the full state
+    // including velocities lives in host_state.
+    std::vector<float> positions;
 
     HostVector<float> host_state;
     DeviceVector<float> device_state;
@@ -41,7 +45,7 @@ public:
 
     // Flat per-particle neighbor list, populated each step by
     // FindNeighborsKernel and consumed by ComputeRHSKernel.
-    // Sized n*9*particles_per_cell (9 = 3x3 stencil cell count).
+    // Sized n*kStencilCells*particles_per_cell (27 = 3x3x3 stencil).
     // Each particle's row is terminated by a -1 sentinel.
     DeviceVector<int> device_neighbors;
 
@@ -71,22 +75,22 @@ public:
     float take_step_wct()         const;
 
 
-    void initialize_to_two_particles(const float x0, const float y0);
+    void initialize_to_two_particles(const float x0, const float y0, const float z0);
 
-    void initialize_to_cube(const float x0, const float y0);
+    void initialize_to_cube(const float x0, const float y0, const float z0);
 
-    void initialize_to_single_particle(const float x0, const float y0);
+    void initialize_to_single_particle(const float x0, const float y0, const float z0);
 
     void take_step();
 
     float compute_total_energy();
 
     // Copies device state to host and checks whether every particle's
-    // (x, y) is finite and within the [-1, 1]x[-1, 1] domain.
+    // position is finite and inside the configured domain box.
     bool is_stable();
 
     // Max |acceleration| over all particles, from the most recent take_step()'s
-    // ComputeRHSKernel pass (device_rhs[4i+2], [4i+3]).
+    // ComputeRHSKernel pass (the velocity half of device_rhs).
     float compute_max_acceleration();
 
     // Lifetime-cumulative count of collision-grid overflow incidents (see

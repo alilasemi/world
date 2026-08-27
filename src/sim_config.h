@@ -2,18 +2,36 @@
 #include <string>
 #include <vector>
 
+// Spatial dimension and per-particle state layout. The simulation is 3D:
+// state is a flat array of kStateStride floats per particle, laid out as
+// [x, y, z, vx, vy, vz]. z is "up" -- gravity acts along -z -- which is the
+// usual convention for a DEM/CFD code, at the cost of one axis flip in the
+// renderer's view matrix (GL convention is y-up).
+//
+// These exist so the layout is stated once rather than as a bare `4 *` (now
+// `6 *`) scattered across every kernel. Position components live at offsets
+// 0..kDim-1 and velocity components at kDim..kStateStride-1.
+constexpr int kDim = 3;
+constexpr int kStateStride = 2 * kDim;
+
+// Number of cells in the neighbor-search stencil: 3^kDim (3x3x3 in 3D). Used
+// to size the flat neighbor array as n * kStencilCells * particles_per_cell.
+constexpr int kStencilCells = 27;
+
 // Small plain-old-data structs passed by value into the CUDA kernels. They hold
 // only the values each kernel needs device-side, so they're trivially copyable
 // and safe as __global__ arguments.
 
-// Simulation domain bounds. Kernels map a particle (x, y) into a grid cell via
-// (x - x_min) / (x_max - x_min), so making these configurable lets the domain be
-// something other than the historical [-1, 1] x [-1, 1].
+// Simulation domain bounds. Kernels map a particle (x, y, z) into a grid cell
+// via (x - x_min) / (x_max - x_min), so making these configurable lets the
+// domain be something other than the historical [-1, 1] cube.
 struct DomainParams {
     float x_min;
     float x_max;
     float y_min;
     float y_max;
+    float z_min;
+    float z_max;
 };
 
 // Physics constants consumed by ComputeRHSKernel (and a subset by EnergyKernel).
@@ -21,10 +39,14 @@ struct PhysicsParams {
     float gravity;
     float particle_radius;
     float max_force;
-    float floor_y;
-    float ceiling_y;
-    float left_wall_x;
-    float right_wall_x;
+    // The six domain boundaries. z is up, so floor/ceiling are the z walls and
+    // the remaining four are the vertical sides.
+    float floor_z;
+    float ceiling_z;
+    float wall_x_min;
+    float wall_x_max;
+    float wall_y_min;
+    float wall_y_max;
     // Target coefficient of restitution (0 = fully inelastic/critically
     // damped, 1 = perfectly elastic/no damping) for the linear
     // spring-dashpot contact model in ComputeRHSKernel. See
@@ -33,22 +55,20 @@ struct PhysicsParams {
     float restitution;
 };
 
-// Full host-side configuration. Every member defaults to the value that was
-// hardcoded in the source before this was introduced, so a default-constructed
-// SimConfig reproduces the original behavior exactly (important: the tests and
-// the profiling/stability drivers rely on the default-constructed sim).
+// Full host-side configuration.
 struct SimConfig {
     // Simulation / grid. The collision grid is used for neighbor lookup (see
-    // FindNeighborsKernel / "collision_grid" there); its x/y cell counts are
+    // FindNeighborsKernel / "collision_grid" there); its x/y/z cell counts are
     // independently configurable.
     float dt = 0.0001f;
     int collision_grid_size_x = 32;
     int collision_grid_size_y = 32;
+    int collision_grid_size_z = 32;
     int particles_per_cell = 64;
     int threads_per_block = 256;
 
     // Domain bounds
-    DomainParams domain{-1.0f, 1.0f, -1.0f, 1.0f};
+    DomainParams domain{-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f};
 
     // Physics
     PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, 1.0f, -1.0f, 1.0f, 0.3f};
@@ -60,7 +80,8 @@ struct SimConfig {
     std::string init_type = "cube";  // "cube" | "two_particles" | "single_particle"
     float init_x0 = -0.5f;
     float init_y0 = 0.0f;
-    float init_vx0 = 0.0f;  // single_particle only; cube/two_particles always start at rest
+    float init_z0 = 0.0f;
+    float init_vx0 = 0.0f;
     float init_vy0 = 0.0f;
     float cube_length_x = 1.0f;  // particle spacing is derived from physics.particle_radius
     float cube_length_y = 1.0f;

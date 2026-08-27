@@ -61,6 +61,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         if (key == "dt") cfg.dt = f();
         else if (key == "collision_grid_size_x") cfg.collision_grid_size_x = i();
         else if (key == "collision_grid_size_y") cfg.collision_grid_size_y = i();
+        else if (key == "collision_grid_size_z") cfg.collision_grid_size_z = i();
         else if (key == "particles_per_cell") cfg.particles_per_cell = i();
         else if (key == "threads_per_block") cfg.threads_per_block = i();
         else warn_unknown(section, key);
@@ -69,15 +70,19 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "x_max") cfg.domain.x_max = f();
         else if (key == "y_min") cfg.domain.y_min = f();
         else if (key == "y_max") cfg.domain.y_max = f();
+        else if (key == "z_min") cfg.domain.z_min = f();
+        else if (key == "z_max") cfg.domain.z_max = f();
         else warn_unknown(section, key);
     } else if (section == "physics") {
         if (key == "gravity") cfg.physics.gravity = f();
         else if (key == "particle_radius") cfg.physics.particle_radius = f();
         else if (key == "max_force") cfg.physics.max_force = f();
-        else if (key == "floor_y") cfg.physics.floor_y = f();
-        else if (key == "ceiling_y") cfg.physics.ceiling_y = f();
-        else if (key == "left_wall_x") cfg.physics.left_wall_x = f();
-        else if (key == "right_wall_x") cfg.physics.right_wall_x = f();
+        else if (key == "floor_z") cfg.physics.floor_z = f();
+        else if (key == "ceiling_z") cfg.physics.ceiling_z = f();
+        else if (key == "wall_x_min") cfg.physics.wall_x_min = f();
+        else if (key == "wall_x_max") cfg.physics.wall_x_max = f();
+        else if (key == "wall_y_min") cfg.physics.wall_y_min = f();
+        else if (key == "wall_y_max") cfg.physics.wall_y_max = f();
         else if (key == "restitution") cfg.physics.restitution = f();
         else warn_unknown(section, key);
     } else if (section == "materials") {
@@ -87,8 +92,10 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         if (key == "type") cfg.init_type = unquote(value);
         else if (key == "x0") cfg.init_x0 = f();
         else if (key == "y0") cfg.init_y0 = f();
+        else if (key == "z0") cfg.init_z0 = f();
         else if (key == "vx0") cfg.init_vx0 = f();
         else if (key == "vy0") cfg.init_vy0 = f();
+        else if (key == "vz0") cfg.init_vz0 = f();
         else if (key == "cube_length_x") cfg.cube_length_x = f();
         else if (key == "cube_length_y") cfg.cube_length_y = f();
         else if (key == "sled_x") cfg.sled_x = f();

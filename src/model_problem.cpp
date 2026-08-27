@@ -34,11 +34,11 @@ void ensure_output_dir_exists() {
     }
 }
 
-// One step's full state: simulated time plus every particle's (x, y, vx, vy),
-// in the same flat order as ParticleDynamics::host_state.
+// One step's full state: simulated time plus every particle's
+// (x, y, z, vx, vy, vz), in the same flat order as ParticleDynamics::host_state.
 struct HistoryRow {
     float time;
-    std::vector<float> state;  // 4*n floats
+    std::vector<float> state;  // kStateStride*n floats
 };
 
 // One (dt, max_force, restitution) combo's full run.
@@ -74,13 +74,15 @@ ComboHistory run_combo(const SimConfig& config, float dt, float max_force, float
     // t=0 row: the constructor already ran unpack_state() once, so
     // host_state already reflects the initial condition.
     combo.rows.push_back({sim.time,
-            std::vector<float>(sim.host_state.data(), sim.host_state.data() + 4 * sim.n)});
+            std::vector<float>(sim.host_state.data(),
+                    sim.host_state.data() + kStateStride * sim.n)});
 
     for (int step = 0; step < num_steps; ++step) {
         sim.take_step();
         sim.unpack_state();
         combo.rows.push_back({sim.time,
-                std::vector<float>(sim.host_state.data(), sim.host_state.data() + 4 * sim.n)});
+                std::vector<float>(sim.host_state.data(),
+                    sim.host_state.data() + kStateStride * sim.n)});
     }
 
     // Unlike stability_and_accuracy/broadcast.cpp, an overflowing combo just
@@ -111,7 +113,7 @@ void write_history(const std::string& path, int n, const std::vector<ComboHistor
     }
     fprintf(f, "# step time");
     for (int i = 0; i < n; ++i) {
-        fprintf(f, " x%d y%d vx%d vy%d", i, i, i, i);
+        fprintf(f, " x%d y%d z%d vx%d vy%d vz%d", i, i, i, i, i, i);
     }
     fprintf(f, "\n");
     for (std::size_t c = 0; c < combos.size(); ++c) {
@@ -150,18 +152,19 @@ const char* kPalette[] = {
 };
 constexpr std::size_t kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
 
-// Plots time (column 2) vs. particle 0's y-position (column 4) for every
+// Plots time (column 2) vs. particle 0's z-position (column 5 -- z is the
+// gravity axis, and each row is step time x0 y0 z0 vx0 vy0 vz0) for every
 // combo as its own colored, legended line -- the sensible default for a
 // model problem, which by design has only a particle or two -- with a
 // purple/colored dot at every recorded row (i.e. every single timestep) so
 // the timestep size is visible directly on the trajectory, plus a red
-// dashed reference line at y = floor_y + particle_radius, the height at
+// dashed reference line at z = floor_z + particle_radius, the height at
 // which particle 0's surface just touches the floor. Same
 // system("gnuplot ...") idiom as stability_and_accuracy.cpp: a nonzero exit
 // just warns, it doesn't fail the run (the history data is what matters
 // most and is already written).
 void write_and_run_gnuplot_script(const std::string& script_path, const std::string& png_path,
-        const std::string& data_path, const std::vector<ComboHistory>& combos, float contact_y) {
+        const std::string& data_path, const std::vector<ComboHistory>& combos, float contact_z) {
     FILE* f = fopen(script_path.c_str(), "w");
     if (!f) {
         std::fprintf(stderr, "Could not open '%s' for writing; skipping plot.\n", script_path.c_str());
@@ -173,20 +176,20 @@ void write_and_run_gnuplot_script(const std::string& script_path, const std::str
     fprintf(f, "set output \"%s\"\n", png_path.c_str());
     fprintf(f, "set title \"Particle 0 trajectory\"\n");
     fprintf(f, "set xlabel \"time (s)\"\n");
-    fprintf(f, "set ylabel \"y position\"\n");
+    fprintf(f, "set ylabel \"z position\"\n");
     fprintf(f, "set key outside right\n");
 
     fprintf(f, "plot ");
     for (std::size_t c = 0; c < combos.size(); ++c) {
         const ComboHistory& combo = combos[c];
-        fprintf(f, "%s\"%s\" index %zu using 2:4 with linespoints lw 2 lc rgb \"%s\" pt 7 ps 0.5 "
+        fprintf(f, "%s\"%s\" index %zu using 2:5 with linespoints lw 2 lc rgb \"%s\" pt 7 ps 0.5 "
                 "title \"dt=%.4g, max_force=%.4g, e=%.3g\", \\\n",
                 c == 0 ? "" : "     ", data_path.c_str(), c, kPalette[c % kPaletteSize],
                 static_cast<double>(combo.dt), static_cast<double>(combo.max_force),
                 static_cast<double>(combo.restitution));
     }
     fprintf(f, "     %.9g with lines lc rgb \"red\" dashtype 2 lw 2 title \"floor contact\"\n",
-            static_cast<double>(contact_y));
+            static_cast<double>(contact_z));
     fclose(f);
 
     const std::string cmd = "gnuplot \"" + script_path + "\"";
@@ -233,10 +236,10 @@ int main(int argc, char** argv) {
     const std::string script_path = std::string(kOutputDir) + "/trajectory_plot.gp";
     const std::string png_path = std::string(kOutputDir) + "/trajectory_plot.png";
 
-    const int n = static_cast<int>(combos[0].rows[0].state.size() / 4);
+    const int n = static_cast<int>(combos[0].rows[0].state.size() / kStateStride);
     write_history(data_path, n, combos);
-    const float contact_y = config.physics.floor_y + config.physics.particle_radius;
-    write_and_run_gnuplot_script(script_path, png_path, data_path, combos, contact_y);
+    const float contact_z = config.physics.floor_z + config.physics.particle_radius;
+    write_and_run_gnuplot_script(script_path, png_path, data_path, combos, contact_z);
 
     std::size_t total_rows = 0;
     for (const ComboHistory& combo : combos) {

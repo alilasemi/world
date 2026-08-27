@@ -1,6 +1,7 @@
 #pragma once
 #include <cuda_runtime.h>
 #include "kernel.h"
+#include "sim_config.h"  // kDim / kStateStride: the state layout these integrators walk
 
 // One Picard update for backward Euler: x^{n+1}_{k+1} = x^n + dt * f(x^{n+1}_k).
 // Call this kernel once per Picard iteration; the caller is responsible for
