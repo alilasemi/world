@@ -66,6 +66,62 @@ equal energy, so a sigma^2-weighted mean of length scales ranks `v_x` above `v_y
 asymmetry, in a setup that is symmetric in x and y by construction — the symmetry is what made it
 detectable.
 
+**Predictability measured (2026-08-26; `build/bin/chaos`, `surrogate/plot_chaos.py`, figure in
+`assets/screenshots/predictability.png`). This supplies the denominator, and it changes the
+verdict.** An ensemble at fixed theta, members differing only by a random displacement of every
+grain's initial position (`initialization.perturbation`, a fraction of the radius, with its own seed
+so the base packing stays bit-identical):
+
+*Chaos is real and strong.* With `perturbation = 1e-3 * radius` (eps = 10 um, one hundredth of a
+grain diameter), the RMS per-grain separation amplifies **3806x**, from 1e-5 m to 3.81e-2 m, i.e. to
+**1.9 grain diameters**. It reaches 90% of that plateau at **t = 0.62 s**, which is the per-grain
+predictability horizon.
+
+The growth is *not* a single exponential, and quoting one rate would be sloppy. Local
+`d(ln D)/dt` by window: **23.3 /s** on [0.02, 0.06] (a fast transient as the contact network
+rearranges), settling to a sustained **5.6-6.4 /s** on [0.14, 0.60] (e-folding time 0.16-0.18 s),
+then collapsing to **0.17 /s** after 0.60 s. The sustained ~6 /s is the figure to quote.
+
+*Saturation here is caused by jamming, not by grains exploring the domain.* Growth stops exactly when
+the pile settles and friction locks the packing, which is why the plateau sits at only 1.9 grain
+diameters rather than at the scale of the assembly. The horizon is therefore set by how long the
+material flows. Consequently the textbook estimate
+`t_horizon ~ (1/lambda) ln(D_sat/eps) = 1.38 s` overestimates the measured 0.62 s, because the early
+growth is far faster than the sustained rate -- use the measured plateau, not the formula.
+
+*The coarse field is dramatically more predictable.* Over the same interval, and past the point where
+per-grain separation has saturated, the mass field differs by only **0.086** and the field's center of
+mass by 0.009 grid nodes. That gap between the two curves is the whole argument for predicting a
+coarse field rather than a trajectory: chaos destroys the estimator, not the quantity.
+
+*The floor for the surrogate is 0.168, and getting this number right required care.* With
+`perturbation = 0.25 * radius` (distinct realizations of the same macroscopic state), the **pairwise**
+difference between realizations is 0.245, but that is **not** the floor. If `s = mu + n` with
+independent zero-mean `n`, then `||s_a - s_b|| ~ sqrt(2)||n||` while a model predicting `mu` incurs
+only `||n||`. Measured directly from `chaos/final_fields.bin` (16 realizations), the RMS deviation
+**about the ensemble mean** is **0.168**, and the ratio to the pairwise number is 1.46 against
+`sqrt(2) = 1.414` — the relation is confirmed empirically, so pairwise/sqrt(2) is a valid proxy when
+fields aren't dumped. Comparing the surrogate to the pairwise 0.245 instead would have wrongly
+suggested it was nearly optimal.
+
+**Verdict:**
+
+| quantity | value | vs floor |
+|---|---|---|
+| irreducible floor (scatter about the conditional mean) | **0.168** | — |
+| POD truncation only, K=20 | 0.243 | 1.45x |
+| full Stage-1 surrogate | 0.381 | **2.27x** |
+
+So there **is** real headroom: the surrogate is 2.27x the floor, not at it. Both contributions are
+above the floor, so both need work, and the priority is now measured rather than guessed:
+- **Truncation** is above the floor at K=20 (0.243) and still marginally above at K=40 (0.192 held
+  out). K ~ 40-60 should bring it to ~0.17 and stop being the binding constraint.
+- **Regression** is then the limiter (the surrogate sits 0.38 against a 0.24 truncation error), which
+  points at more training data — the pilot is only 150 realizations for a 7-dimensional input.
+
+Nothing here suggests a nonlinear encoder is needed: the linear basis reaches 0.19 at K=40 against a
+0.168 floor, so the subspace is nearly adequate and the autoencoder escalation stays unnecessary.
+
 *A hypothesis that was checked and rejected:* that the fields are nearly disjointly supported (which
 would force ~one mode per snapshot). Measured pairwise support overlap is 0.81 mean / 0.92 median and
 pairwise cosine similarity 0.35, so the fields overlap heavily. Slow spectrum decay here is shape
@@ -413,6 +469,8 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
 - `surrogate/fit_surrogate.py` — Stage 1: fits the GPs, reports the truncation/regression error
   decomposition, per-mode R^2, uncertainty calibration and ARD sensitivity, and writes the
   imagination-vs-truth figure.
+- `surrogate/plot_chaos.py` — the predictability figure (per-grain divergence vs field divergence,
+  with the surrogate error and the measured floor marked).
 - `surrogate/pod_study.py` — per-channel POD/SVD study: spectrum, energy captured, held-out
   reconstruction error vs rank, sample complexity (error vs number of training snapshots), and the
   per-checkpoint breakdown that revealed the momentum-decay effect. `--per-checkpoint` is the flag
