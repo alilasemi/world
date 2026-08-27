@@ -133,6 +133,120 @@ TEST(ParticleDynamicsTest, TotalEnergyNeverIncreases) {
     EXPECT_LT(previous, initial);
 }
 
+// ---------------------------------------------------------------------------
+// Density/momentum latent (DensityGridKernel). These are the tests that make
+// the deposit trustworthy as a regression target: if mass is silently lost or
+// smeared with the wrong weights, every downstream surrogate result inherits
+// the error with no obvious symptom.
+// ---------------------------------------------------------------------------
+
+// Trilinear deposit must be exactly mass-conserving: sum over all nodes of the
+// mass channel equals the total particle mass, for an arbitrary (jittered,
+// mid-flight) configuration. This is the single most important property --
+// weights that fail to sum to 1, or dropped out-of-range nodes, show up here.
+TEST(ParticleDynamicsTest, DensityGridConservesTotalMass) {
+    SimConfig config;
+    config.init_jitter = 0.3f;   // break the lattice so nodes are hit off-center
+    ParticleDynamics sim(config);
+    for (int step = 0; step < 250; ++step) {
+        sim.take_step();   // let it fall and disorder, so this is not a trivial case
+    }
+    sim.compute_density_grid();
+
+    double deposited = 0.0;
+    for (size_t node = 0; node < sim.density_grid_nodes(); ++node) {
+        deposited += sim.host_density_grid[node];
+    }
+
+    sim.unpack_state();
+    double expected = 0.0;
+    for (int i = 0; i < sim.n; ++i) {
+        expected += sim.host_mass[sim.host_material[i]];
+    }
+    ASSERT_GT(expected, 0.0);
+    EXPECT_NEAR(deposited, expected, 1e-4 * expected);
+}
+
+// A single grain sitting exactly on a grid node must put all of its mass on
+// that one node -- the degenerate case of the trilinear weights.
+TEST(ParticleDynamicsTest, DensityGridPutsGrainOnNodeAtSingleNode) {
+    SimConfig config;
+    config.init_type = "single_particle";
+    config.density_grid_size_x = 5;
+    config.density_grid_size_y = 5;
+    config.density_grid_size_z = 5;
+    // Node-centered grid over [-1,1] with 5 nodes -> spacing 0.5, nodes at
+    // -1, -0.5, 0, 0.5, 1. Place the grain exactly on node (1,2,3).
+    config.init_x0 = -0.5f;
+    config.init_y0 = 0.0f;
+    config.init_z0 = 0.5f;
+    ParticleDynamics sim(config);
+    sim.compute_density_grid();
+
+    const int expected_node = (1 * 5 + 2) * 5 + 3;
+    const float m = sim.host_mass[config.particle_material];
+    for (size_t node = 0; node < sim.density_grid_nodes(); ++node) {
+        if (static_cast<int>(node) == expected_node) {
+            EXPECT_NEAR(sim.host_density_grid[node], m, 1e-6f * m);
+        } else {
+            EXPECT_NEAR(sim.host_density_grid[node], 0.0f, 1e-6f * m);
+        }
+    }
+}
+
+// A grain at the exact center of a cell must split eight ways, 1/8 each.
+TEST(ParticleDynamicsTest, DensityGridSplitsCellCenterEightWays) {
+    SimConfig config;
+    config.init_type = "single_particle";
+    config.density_grid_size_x = 5;
+    config.density_grid_size_y = 5;
+    config.density_grid_size_z = 5;
+    // Spacing 0.5; halfway between nodes on every axis.
+    config.init_x0 = -0.75f;
+    config.init_y0 = -0.25f;
+    config.init_z0 = 0.25f;
+    ParticleDynamics sim(config);
+    sim.compute_density_grid();
+
+    const float m = sim.host_mass[config.particle_material];
+    int nonzero = 0;
+    float total = 0.0f;
+    for (size_t node = 0; node < sim.density_grid_nodes(); ++node) {
+        const float value = sim.host_density_grid[node];
+        total += value;
+        if (value > 1e-9f) {
+            ++nonzero;
+            EXPECT_NEAR(value, m / 8.0f, 1e-5f * m);
+        }
+    }
+    EXPECT_EQ(nonzero, 8);
+    EXPECT_NEAR(total, m, 1e-5f * m);
+}
+
+// The momentum channels must reproduce mass * velocity, so that dividing
+// channel 1..3 by channel 0 recovers a mass-weighted velocity field.
+TEST(ParticleDynamicsTest, DensityGridMomentumMatchesMassTimesVelocity) {
+    SimConfig config;
+    config.init_type = "single_particle";
+    config.init_vx0 = 2.0f;
+    config.init_vy0 = -3.0f;
+    config.init_vz0 = 0.5f;
+    ParticleDynamics sim(config);
+    sim.compute_density_grid();
+
+    const size_t nodes = sim.density_grid_nodes();
+    const float m = sim.host_mass[config.particle_material];
+    const float expected_velocity[kDim] = {2.0f, -3.0f, 0.5f};
+    for (int a = 0; a < kDim; ++a) {
+        double momentum = 0.0;
+        for (size_t node = 0; node < nodes; ++node) {
+            momentum += sim.host_density_grid[(a + 1) * nodes + node];
+        }
+        EXPECT_NEAR(momentum, static_cast<double>(m) * expected_velocity[a],
+                1e-4 * std::abs(static_cast<double>(m) * expected_velocity[a]) + 1e-9);
+    }
+}
+
 // Every grain of a cube must receive the configured initial velocity -- this is
 // what makes a cube a thrown blob, and it is the whole basis of the dataset's
 // "action". (Replaces an older test that checked a lone "sled" particle moved;

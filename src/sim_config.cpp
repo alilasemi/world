@@ -64,6 +64,9 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "collision_grid_size_z") cfg.collision_grid_size_z = i();
         else if (key == "particles_per_cell") cfg.particles_per_cell = i();
         else if (key == "threads_per_block") cfg.threads_per_block = i();
+        else if (key == "density_grid_size_x") cfg.density_grid_size_x = i();
+        else if (key == "density_grid_size_y") cfg.density_grid_size_y = i();
+        else if (key == "density_grid_size_z") cfg.density_grid_size_z = i();
         else warn_unknown(section, key);
     } else if (section == "domain") {
         if (key == "x_min") cfg.domain.x_min = f();

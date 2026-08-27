@@ -17,6 +17,16 @@ simulation:
   particles_per_cell: 8
   threads_per_block: 256
 
+  # Coarse grid the density/momentum latent is deposited onto, sized
+  # INDEPENDENTLY of the collision grid above: the collision grid needs ~one
+  # particle diameter per cell for the neighbor search to stay cheap, while the
+  # latent wants to be coarse enough that each node averages many grains and a
+  # learned model has few outputs. 32^3 nodes x 4 channels (mass + momentum
+  # per axis) = 131072 floats = 512 KB.
+  density_grid_size_x: 32
+  density_grid_size_y: 32
+  density_grid_size_z: 32
+
 # Simulation domain bounds. Particles are mapped into grid cells across this
 # range; it need not be the historical [-1, 1] cube.
 domain:

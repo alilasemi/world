@@ -5,6 +5,7 @@
 
 #include "compute_rhs_kernel.h"
 #include "device_vector.h"
+#include "density_grid_kernel.h"
 #include "energy_kernel.h"
 #include "find_neighbors_kernel.h"
 #include "host_vector.h"
@@ -52,6 +53,15 @@ public:
     DeviceVector<float> device_energy;
     HostVector<float> host_energy;
 
+    // Coarse density/momentum latent (see DensityGridKernel). Channel-major:
+    // channel 0 is mass, channels 1..kDim are momentum components. Refreshed on
+    // demand by compute_density_grid(), not every step.
+    DeviceVector<float> device_density_grid;
+    HostVector<float> host_density_grid;
+    int density_grid_size_x;
+    int density_grid_size_y;
+    int density_grid_size_z;
+
     // Timing
     float time_unpack_state = 0.f;
     cudaEvent_t start_event, stop_event;
@@ -73,6 +83,7 @@ public:
     float find_neighbors_wct()    const;
     float compute_rhs_wct()       const;
     float take_step_wct()         const;
+    float density_grid_wct()      const;
 
 
     void initialize_to_two_particles(const float x0, const float y0, const float z0);
@@ -84,6 +95,15 @@ public:
     void take_step();
 
     float compute_total_energy();
+
+    // Deposits mass and momentum onto the coarse latent grid and copies it to
+    // host_density_grid. Returns the number of floats written (kChannels *
+    // nodes). Trilinear/CIC deposit, so total deposited mass equals the total
+    // particle mass exactly.
+    size_t compute_density_grid();
+
+    // Number of nodes per channel in the density grid.
+    size_t density_grid_nodes() const;
 
     // Copies device state to host and checks whether every particle's
     // position is finite and inside the configured domain box.
@@ -111,5 +131,6 @@ private:
     std::unique_ptr<ComputeRHSKernel> compute_rhs_kernel;
     std::unique_ptr<SemiImplicitEulerKernel> semi_implicit_euler_kernel;
     std::unique_ptr<BackwardEulerPicardKernel> backward_euler_picard_kernel;
+    std::unique_ptr<DensityGridKernel> density_grid_kernel;
     std::unique_ptr<EnergyKernel> energy_kernel;
 };

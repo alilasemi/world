@@ -71,6 +71,19 @@ ParticleDynamics::ParticleDynamics(const SimConfig& config_) : config(config_) {
     backward_euler_picard_kernel = std::make_unique<BackwardEulerPicardKernel>(device_state.data(),
             device_state_n.data(), device_rhs.data(), n, dt, config.threads_per_block, kt);
 
+    // Coarse density/momentum latent.
+    density_grid_size_x = config.density_grid_size_x;
+    density_grid_size_y = config.density_grid_size_y;
+    density_grid_size_z = config.density_grid_size_z;
+    const size_t density_grid_floats = static_cast<size_t>(DensityGridKernel::kChannels)
+            * density_grid_nodes();
+    device_density_grid = DeviceVector<float>(density_grid_floats);
+    host_density_grid = HostVector<float>(density_grid_floats);
+    density_grid_kernel = std::make_unique<DensityGridKernel>(
+            device_density_grid.data(), device_state.data(), device_material.data(),
+            device_mass.data(), n, density_grid_size_x, density_grid_size_y, density_grid_size_z,
+            config.domain, config.threads_per_block, kt);
+
     device_energy = DeviceVector<float>(1);
     host_energy = HostVector<float>(1);
     energy_kernel = std::make_unique<EnergyKernel>(device_state.data(), device_material.data(),
@@ -245,6 +258,19 @@ void ParticleDynamics::take_step() {
     time += dt;
 }
 
+size_t ParticleDynamics::density_grid_nodes() const {
+    return static_cast<size_t>(density_grid_size_x) * static_cast<size_t>(density_grid_size_y)
+            * static_cast<size_t>(density_grid_size_z);
+}
+
+
+size_t ParticleDynamics::compute_density_grid() {
+    (*density_grid_kernel)();
+    host_density_grid.copy_from_device(device_density_grid);
+    return host_density_grid.size();
+}
+
+
 float ParticleDynamics::compute_total_energy() {
     // Rebuild the neighbor list first: the pair-contact term needs neighbors
     // consistent with the CURRENT positions, and take_step() leaves the list
@@ -301,6 +327,7 @@ int ParticleDynamics::grid_overflow_count() const { return find_neighbors_kernel
 
 float ParticleDynamics::find_neighbors_wct()    const { return find_neighbors_kernel->wall_clock_time(); }
 float ParticleDynamics::compute_rhs_wct()       const { return compute_rhs_kernel->wall_clock_time(); }
+float ParticleDynamics::density_grid_wct()      const { return density_grid_kernel->wall_clock_time(); }
 float ParticleDynamics::take_step_wct()         const {
     if (config.time_integrator == "semi_implicit_euler") {
         return semi_implicit_euler_kernel->wall_clock_time();

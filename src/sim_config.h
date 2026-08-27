@@ -72,6 +72,16 @@ struct SimConfig {
     int particles_per_cell = 64;
     int threads_per_block = 256;
 
+    // Coarse grid the density/momentum latent is deposited onto (see
+    // DensityGridKernel). Sized INDEPENDENTLY of the collision grid: the
+    // collision grid must be about one particle diameter per cell for the
+    // neighbor search to stay cheap, whereas the latent wants to be coarse
+    // enough that a learned model has few outputs and each node averages many
+    // grains.
+    int density_grid_size_x = 32;
+    int density_grid_size_y = 32;
+    int density_grid_size_z = 32;
+
     // Domain bounds
     DomainParams domain{-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f};
 

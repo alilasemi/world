@@ -52,4 +52,19 @@ int main(int argc, char** argv) {
     std::cout << "Time to compute RHS: "    << sim.compute_rhs_wct()       - rhs0   << " ms" << std::endl;
     std::cout << "Time to take step: "      << sim.take_step_wct()         - step0  << " ms" << std::endl;
     std::cout << "Time to unpack_state: "   << sim.time_unpack_state                << " ms" << std::endl;
+
+    // Cost of the encoder (particles -> grid), separated into the CUDA kernel
+    // itself and the device->host transfer of the result. Timed over a fixed
+    // number of calls so it is comparable across grid resolutions; independent
+    // of any POD rank, since the deposit does not know about the basis.
+    const int encode_calls = 20;
+    const float before_kernel = sim.density_grid_wct();
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < encode_calls; ++i) sim.compute_density_grid();
+    const double wall = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t0).count() * 1e3 / encode_calls;
+    const float kernel_only = (sim.density_grid_wct() - before_kernel) / encode_calls;
+    std::cout << "Encode (particles -> grid), kernel only:  " << kernel_only << " ms" << std::endl;
+    std::cout << "Encode (particles -> grid), incl. copy:   " << wall << " ms  ("
+              << sim.host_density_grid.size() * sizeof(float) / 1024 << " KB)" << std::endl;
 }
