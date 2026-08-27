@@ -13,6 +13,10 @@ history.dat
 trajectory_plot.gp
 trajectory_plot.png
 
+# Python virtualenv for the surrogate tooling (recreate with surrogate/requirements.txt)
+surrogate/.venv/
+__pycache__/
+
 # Generated dataset artifacts (large; regenerate with build/bin/dataset).
 # The base config dataset/blob_throw.yaml IS tracked.
 dataset/*.bin

@@ -1,0 +1,9 @@
+# Python tooling for the outcome surrogate (POD + Gaussian process regression).
+# The simulator itself has no Python dependency -- this is only the analysis side.
+#
+#   python3 -m venv surrogate/.venv
+#   surrogate/.venv/bin/pip install -r surrogate/requirements.txt
+numpy>=2.0
+scipy>=1.14
+scikit-learn>=1.5
+matplotlib>=3.9

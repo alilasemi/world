@@ -327,6 +327,15 @@ time**. Note the scaling is *superlinear*: 4.6x the grains costs 12.6x the time 
 91k, because `device_neighbors` (`n*27*k` ints) blows past the 2080's 4 MB L2. That is the wall to
 attack before chasing bigger particle counts.
 
+## Surrogate tooling (Python)
+
+The simulator has no Python dependency; the analysis side does. It lives in `surrogate/` behind a
+virtualenv so nothing leaks into the system interpreter:
+```
+python3 -m venv surrogate/.venv
+surrogate/.venv/bin/pip install -r surrogate/requirements.txt
+```
+
 ## Client/browser verification (headless)
 
 This dev box can drive the actual WebGL2 client headlessly — use this to verify client-side
