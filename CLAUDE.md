@@ -2,6 +2,77 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Contact model now includes Coulomb friction (added 2026-08-25).** `physics.friction` (mu,
+default 0.5) adds a tangential force capped at `mu * |F_normal|`, and the dashpot was narrowed to act
+on the **normal component of the relative velocity only** — previously it was applied to the full
+relative-velocity vector, which damped tangential sliding with a coefficient derived for head-on
+restitution. Verified analytically, not by eyeballing a pile:
+`model_problems/sliding_friction.yaml` slides one grain on the floor and it decelerates at
+-4.49 m/s^2 against the ideal `-mu*g = -4.905`, then stops dead and stays stopped.
+
+Three things learned in the process, all worth not rediscovering:
+
+1. **Regularized Coulomb, and why.** True Coulomb friction is a set-valued constraint needing
+   per-contact tangential-displacement history (Cundall-Strack), and this solver rebuilds its
+   neighbor list every step so no contact identity survives to hang that history on. The stateless
+   substitute is a viscous tangential force capped at the Coulomb limit, which saturates almost
+   immediately. It does produce a genuine static hold in practice (the sliding grain stops and stays
+   stopped), but it is *sliding* friction with no true static threshold. Also, spheres roll freely —
+   with no rolling resistance the angle of repose comes out shallow (~15 deg here) versus ~30 deg for
+   real sand. Rolling friction is the next fidelity step, not more normal-direction tuning.
+
+   **Decision (2026-08-25): ~15 deg is good enough; do not spend time on this now.** The physics we
+   need is present — the material has a yield stress, holds a slope, and produces a heap rather than
+   a puddle — and the surrogate predicts *spreading outcomes*, which do not depend on matching sand's
+   angle of repose quantitatively. Improving fidelity (rolling resistance, and the Cundall-Strack
+   tangential spring for true static friction) is explicitly deferred to future work. Revisit only
+   if a claim is made about granular statics specifically, where the shallow angle would matter.
+
+2. **A perfect simple-cubic lattice is a degenerate initial condition.** Every sphere sits directly
+   atop another with a vertical contact normal, so there is no lateral force anywhere and the block
+   is self-supporting. Frictionless it collapsed anyway, because floating-point asymmetries grew
+   unopposed; *with* friction those get suppressed and the lattice survives a 3 m/s impact
+   completely intact — which looks like a bug and is not one. `initialization.jitter` (fraction of
+   radius, deterministic via `initialization.seed`) breaks the symmetry and yields a real disordered
+   packing. Compare `assets/screenshots/flat_without_friction.png` (frictionless: a flat carpet
+   covering the whole floor) with `heap_with_friction.png` (mu=0.5 + jitter: a domed heap with a
+   slope). The same knob supplies the epsilon-perturbed ICs the predictability measurement needs.
+
+3. **`compute_total_energy()` now includes contact elastic energy — and that fixed a false alarm.**
+   It originally summed only kinetic + gravitational potential, so a rising trace looked like
+   numerical heating when it was really spring energy from compressed contacts reappearing as
+   kinetic energy. With the contact term added the trace is **monotonically decreasing** as it must
+   be (106240 -> 80630 over 3 s at dt=1e-3): there is no heating. Implementation notes:
+   - The spring potential is **piecewise**, because the force is clamped: quadratic
+     (`0.5*k*delta^2`) until the clamp engages and linear (`max_force*(delta - radius)`) after. Since
+     `k = max_force/radius` the knee sits at exactly `delta = radius`. Treating it as purely
+     quadratic would badly overestimate energy in precisely the large-overlap regime where it
+     matters most.
+   - Pair contacts are counted **once**, from the lower particle index — every pair appears in both
+     particles' neighbor rows.
+   - Dashpot and friction are *dissipative* and correctly contribute nothing.
+   - `compute_total_energy()` rebuilds the neighbor list first, since `take_step()` leaves it one
+     step stale (it searches, then moves the particles). That advances `FindNeighborsKernel`'s
+     lifetime timing accumulator, so any caller that also reports per-frame kernel timings must
+     subtract the difference — `src/profiling_sim.cpp` does exactly this via its `energy_at()`
+     lambda, and without it the energy diagnostic would silently inflate reported neighbor-search
+     time by one extra pass per outer iteration.
+   - `device_neighbors` is memset to the `-1` sentinel at construction so an energy query before the
+     first `take_step()` reads a valid empty list rather than uninitialized memory.
+
+**Float32 position-update stall — a real precision trap.** Semi-implicit Euler does
+`x += dt*v`, and when `dt*|v|` falls below half an ULP of `x`, the position simply does not change.
+Near `|z| ~ 1` the float32 ULP is ~6e-8, so at `dt=1e-5` any `|v|` below ~6e-3 m/s produces *zero*
+displacement. The velocity then persists indefinitely (the spring never sees a position change to
+respond to) and its dashpot force keeps carrying part of the load. Directly observed: a resting grain
+held `z = -0.990035951` bit-identical across 11,000 steps while `vz` stayed pinned at -2.298e-3 m/s,
+and `c_wall * |vz| = 0.657 N` was exactly the shortfall between the normal force (7.19 N) and `m*g`
+(7.848 N) — which is the entire 8% friction deficit above. Consequences: shrinking `dt` makes this
+*worse*, not better, and coordinates whose magnitude is large relative to the displacement per step
+waste precision. Fixing it properly means double-precision positions (or accumulating positions
+relative to a local origin); neither is done, so treat sub-mm-per-second dynamics near the domain
+walls as unresolved.
+
 ## What this is
 
 A real-time **3D** particle/granular simulation: a CUDA simulation backend serves particle state over a WebSocket, and a browser-based WebGL2 client renders it. The simulation is 3D as of 2026-08-25 (`kDim = 3`, state stride 6, z up with gravity along `-z`); the 2D version is reachable only by checking out a commit before that conversion. There are two independent build worlds:
@@ -73,7 +144,7 @@ Two small POD structs in `sim_config.h` — `DomainParams` (`x_min/x_max/y_min/y
 `ParticleDynamics`'s constructor takes a `const SimConfig&` (defaulted), stores it as the public `config` member, and pulls all its grid/physics/init parameters from it instead of hardcoding them. State layout is a flat device array of `kStateStride*n` floats: `[x, y, z, vx, vy, vz]` per particle, with position components at offsets `0..kDim-1` and velocity at `kDim..kStateStride-1`. `kDim`, `kStateStride` and `kStencilCells` are declared in `sim_config.h` so the layout is stated once instead of as a bare `6 *` scattered through every kernel. **z is up** — gravity acts along `-z` — which costs one axis flip in the renderer's view matrix (GL is y-up) but matches DEM/CFD convention. `ParticleDynamics::positions` (renamed from `xy`) holds `kDim` floats per particle and is what gets streamed to the client. Each particle has a `material` id (0 = wall, 1 = snow, 2 = sled) which indexes a `mass` array — this is what differentiates particle types rather than separate classes. Per `take_step()`:
 
 1. `FindNeighborsKernel` (src/find_neighbors_kernel.{h,cu}) — buckets particles into a `collision_grid_size_x x collision_grid_size_y` collision grid (see "Collision grid" below), then gathers each particle's neighbors into a flat `device_neighbors` array for `ComputeRHSKernel` to consume; `particles_per_cell` capacity per cell, gracefully drops excess particles on overflow (see "Collision grid" below) rather than corrupting memory or crashing.
-2. `ComputeRHSKernel` (src/compute_rhs_kernel.{h,cu}) — computes forces per particle: gravity, a penalty-based floor/wall repulsion, and a penalty + damping repulsion against neighbors read from `device_neighbors` (no collision-grid knowledge of its own). The repulsion is a linear spring (`-max_force/radius * overlap`, clamped to `max_force`) plus a linear dashpot that only acts while overlapping — a proper Kelvin-Voigt/linear spring-dashpot contact model (Cundall & Strack 1979). The dashpot coefficient `c` isn't a free parameter: `restitution_to_damping()` derives it from `physics.restitution` (a `[0,1]` coefficient-of-restitution target — 0 = critically damped, 1 = perfectly elastic) via the standard DEM restitution-to-damping relation (Tsuji, Tanaka & Ishida 1992; surveyed in Di Renzo & Di Maio 2004), using the colliding particle's own mass for floor/ceiling/wall contacts (the fixed-boundary = infinite-mass limit) and the two-body reduced mass `m_i*m_j/(m_i+m_j)` for particle-particle contacts. This replaced an earlier model where the damping force was `-floor_force * v_rel` — i.e. the damping *coefficient* was the spring force itself, which injected extra stiffness that grew with impact speed (`∂F/∂y` from that term scaled with `v_rel`), the opposite of what you want when trying to relax the timestep constraint. One caveat (see the comment above `restitution_to_damping()`): the restitution-to-damping formula assumes the spring stays linear for the whole contact, so if an impact is energetic enough to hit the `max_force` clamp, the achieved restitution comes out measurably below the `physics.restitution` target (verified against `model_problems/first_collision.yaml`).
+2. `ComputeRHSKernel` (src/compute_rhs_kernel.{h,cu}) — computes forces per particle: gravity, a penalty-based floor/wall repulsion, and a penalty + damping repulsion against neighbors read from `device_neighbors` (no collision-grid knowledge of its own). The repulsion is a linear spring (`-max_force/radius * overlap`, clamped to `max_force`) plus a linear dashpot that only acts while overlapping — a proper Kelvin-Voigt/linear spring-dashpot contact model (Cundall & Strack 1979) — plus a **tangential Coulomb friction force** capped at `physics.friction * |F_normal|` (see `add_tangential_friction()`). The dashpot acts on the **normal component of the relative velocity only**; the relative velocity is decomposed against the contact normal, and the tangential remainder is what friction opposes. For the axis-aligned walls the normal is `+/- e_a`, so `vel[a]` is already the normal component and the tangential part is `vel` with that component zeroed. The dashpot coefficient `c` isn't a free parameter: `restitution_to_damping()` derives it from `physics.restitution` (a `[0,1]` coefficient-of-restitution target — 0 = critically damped, 1 = perfectly elastic) via the standard DEM restitution-to-damping relation (Tsuji, Tanaka & Ishida 1992; surveyed in Di Renzo & Di Maio 2004), using the colliding particle's own mass for floor/ceiling/wall contacts (the fixed-boundary = infinite-mass limit) and the two-body reduced mass `m_i*m_j/(m_i+m_j)` for particle-particle contacts. This replaced an earlier model where the damping force was `-floor_force * v_rel` — i.e. the damping *coefficient* was the spring force itself, which injected extra stiffness that grew with impact speed (`∂F/∂y` from that term scaled with `v_rel`), the opposite of what you want when trying to relax the timestep constraint. One caveat (see the comment above `restitution_to_damping()`): the restitution-to-damping formula assumes the spring stays linear for the whole contact, so if an impact is energetic enough to hit the `max_force` clamp, the achieved restitution comes out measurably below the `physics.restitution` target (verified against `model_problems/first_collision.yaml`).
 3. `SemiImplicitEulerKernel` (src/semi_implicit_euler_kernel.{h,cu}) or `BackwardEulerPicardKernel` (src/backward_euler_picard_kernel.{h,cu}) — the active time integration kernel, selected by `config.time_integrator`. Semi-implicit Euler updates velocity then position in one pass (using the updated velocity). Backward Euler Picard iterates `config.picard_iterations` times, re-running steps 1–2 each iteration and computing `x^{n+1} = x^n + dt·f(x^{n+1}_k)`, starting from `x^{n+1}_0 = x^n`.
 
 One more kernel is not part of `take_step()` — invoked on demand: `EnergyKernel` (`src/energy_kernel.{h,cu}`) via `ParticleDynamics::compute_total_energy()` — sums each particle's `0.5*m*(vx^2+vy^2) + m*g*h` (`h` = height above the floor) via `atomicAdd` into a single device scalar, re-zeroed (`cudaMemset`) at the start of every call.

@@ -43,6 +43,10 @@ physics:
   # damping). See the restitution_to_damping() comment in
   # compute_rhs_kernel.cu for the derivation and literature references.
   restitution: 0.3
+  # Coulomb friction coefficient for the tangential contact force. This is what
+  # gives the material a yield stress and therefore an angle of repose; at 0 a
+  # released pile has no static strength and spreads until flat. ~0.5 is dry sand.
+  friction: 0.5
 
 materials:
   # Per-material masses, indexed by material id: 0 = wall, 1 = sand.

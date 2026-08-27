@@ -1,0 +1,33 @@
+# Model problem: a single grain sliding on the floor under Coulomb friction.
+#
+# The analytic answer is unambiguous -- a grain in sustained contact
+# decelerates at exactly mu*g and stops after v0/(mu*g) seconds -- which makes
+# this the right place to verify the tangential contact model rather than
+# inferring it from the behavior of a 30k-grain pile.
+#
+# Measured: dvx/dt = -4.49 m/s^2 against the ideal -mu*g = -4.905, and the
+# grain stops dead and stays stopped (no creep). The ~8% deficit is NOT a
+# friction bug -- see the float32 position-update note in CLAUDE.md: the grain
+# retains a tiny downward velocity whose dashpot force permanently carries
+# part of the load, so the normal force sits below m*g and friction scales
+# down with it.
+simulation:
+  dt: 0.00001
+physics:
+  gravity: 9.81
+  particle_radius: 0.01
+  max_force: 2000.0
+  restitution: 0.3
+  friction: 0.5
+materials:
+  masses: [0.0, 0.8, 0.8]
+initialization:
+  type: single_particle
+  x0: -0.5
+  y0: 0.0
+  z0: -0.98999   # resting: floor_z + radius, minus a hair so it is in contact
+  vx0: 1.0
+  vy0: 0.0
+  vz0: 0.0
+model_problem:
+  sim_time: 0.35

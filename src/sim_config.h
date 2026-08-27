@@ -53,6 +53,11 @@ struct PhysicsParams {
     // restitution_to_damping() in compute_rhs_kernel.cu for how this maps
     // to an actual dashpot coefficient.
     float restitution;
+    // Coulomb friction coefficient (mu) for the tangential contact force.
+    // 0 reproduces the old frictionless behavior, in which the material has no
+    // yield stress and therefore no angle of repose -- a released pile spreads
+    // until flat. ~0.5 is representative of dry sand.
+    float friction;
 };
 
 // Full host-side configuration.
@@ -70,8 +75,10 @@ struct SimConfig {
     // Domain bounds
     DomainParams domain{-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f};
 
-    // Physics
-    PhysicsParams physics{9.81f, 0.01f, 100.0f, -1.0f, 1.0f, -1.0f, 1.0f, 0.3f};
+    // Physics: gravity, radius, max_force, floor_z, ceiling_z,
+    // wall_x_min/max, wall_y_min/max, restitution.
+    PhysicsParams physics{9.81f, 0.01f, 100.0f,
+                          -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 0.3f, 0.5f};
 
     // Per-material masses, indexed by material id: 0 = wall (massless/fixed),
     // 1 = sand. The "snow" and "sled" materials were leftovers from an earlier

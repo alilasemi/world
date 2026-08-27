@@ -84,6 +84,7 @@ void apply_kv(SimConfig& cfg, const std::string& section, const std::string& key
         else if (key == "wall_y_min") cfg.physics.wall_y_min = f();
         else if (key == "wall_y_max") cfg.physics.wall_y_max = f();
         else if (key == "restitution") cfg.physics.restitution = f();
+        else if (key == "friction") cfg.physics.friction = f();
         else warn_unknown(section, key);
     } else if (section == "materials") {
         if (key == "masses") cfg.masses = parse_float_list(value);

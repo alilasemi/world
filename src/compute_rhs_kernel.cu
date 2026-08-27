@@ -47,6 +47,37 @@ __device__ inline float restitution_to_damping(float e, float k, float m) {
 }
 
 
+// Regularized Coulomb friction. The true Coulomb law is a set-valued
+// constraint (any tangential force up to mu*|F_n| that prevents sliding),
+// which needs per-contact tangential-displacement history to integrate --
+// and this solver rebuilds its neighbor list from scratch every step, so no
+// contact identity survives between steps to hang that history on.
+//
+// The standard stateless substitute: oppose the tangential relative velocity
+// viscously, capped at the Coulomb limit. With the same dashpot coefficient
+// used for the normal direction, the cap saturates almost immediately, so
+// sliding contacts feel very nearly the full mu*|F_n|.
+//
+// The honest limitation: at exactly zero tangential velocity the force is
+// zero, so this is *sliding* friction with no true static threshold. A heap
+// therefore holds its slope but creeps very slowly rather than locking
+// forever. Getting a genuine static hold requires the Cundall-Strack
+// tangential spring, i.e. persistent per-contact state.
+__device__ inline void add_tangential_friction(float* force, const float* v_tangential,
+        float coulomb_limit, float c_tangential) {
+    float vt_sq = 0.f;
+    for (int a = 0; a < kDim; ++a) {
+        vt_sq += v_tangential[a] * v_tangential[a];
+    }
+    const float vt = sqrtf(vt_sq);
+    if (vt < 1e-8f) return;  // no sliding direction to oppose
+    const float magnitude = min(coulomb_limit, c_tangential * vt);
+    for (int a = 0; a < kDim; ++a) {
+        force[a] -= magnitude * v_tangential[a] / vt;
+    }
+}
+
+
 __global__ void compute_rhs_kernel(const float* state, const int* material,
         const float* mass, float* rhs, const int* neighbors,
         size_t n, int particles_per_cell, PhysicsParams physics) {
@@ -57,6 +88,7 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
     const float max_force = physics.max_force;
     const float radius = physics.particle_radius;
     const float restitution = physics.restitution;
+    const float mu = physics.friction;
     const float spring_k = max_force / radius;  // linear spring constant, pre-clamp
     // The six boundaries, indexed by axis so the wall loop below can treat them
     // uniformly: lower[a] / upper[a] bound axis a. z is up (gravity is -z), so
@@ -86,13 +118,22 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
         // +axis direction and an upper wall pushing in -axis; the spring and
         // contact-only dashpot are identical to the 2D version, just applied
         // per axis instead of being written out four times.
+        // For an axis-aligned wall the outward normal is +/- e_a, so vel[a] is
+        // already exactly the normal velocity component (the dashpot below was
+        // therefore normal-only even before friction existed) and the tangential
+        // velocity is simply vel with component a removed.
         for (int a = 0; a < kDim; ++a) {
+            float v_tangential[kDim];
+            for (int b = 0; b < kDim; ++b) {
+                v_tangential[b] = (b == a) ? 0.f : vel[b];
+            }
 
             const float dist_lower = pos[a] - lower[a] - radius;
             const float f_lower = max(0.f, min(max_force, -max_force / radius * dist_lower));
             force[a] += f_lower;
             if (dist_lower < 0.f) {
                 force[a] -= c_wall * vel[a];
+                add_tangential_friction(force, v_tangential, mu * f_lower, c_wall);
             }
 
             const float dist_upper = upper[a] - pos[a] - radius;
@@ -100,6 +141,7 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
             force[a] -= f_upper;
             if (dist_upper < 0.f) {
                 force[a] -= c_wall * vel[a];
+                add_tangential_friction(force, v_tangential, mu * f_upper, c_wall);
             }
         }
 
@@ -135,6 +177,29 @@ __global__ void compute_rhs_kernel(const float* state, const int* material,
                 const float m_sum = m_i + m_j;
                 const float m_reduced = (m_sum > 0.f) ? (m_i * m_j) / m_sum : 0.f;
                 const float c_pair = restitution_to_damping(restitution, spring_k, m_reduced);
+
+                // Split the relative velocity into normal and tangential parts.
+                // The dashpot acts on the NORMAL component only: the
+                // restitution-to-damping relation is derived for a head-on
+                // collision, so applying that coefficient to the full relative
+                // velocity (as this kernel used to) damped tangential sliding
+                // with a number that means nothing in that direction.
+                float v_relative[kDim];
+                float v_normal_scalar = 0.f;
+                for (int a = 0; a < kDim; ++a) {
+                    v_relative[a] = vel[a] - state[kStateStride * j + kDim + a];
+                    v_normal_scalar += v_relative[a] * normal[a];
+                }
+                float v_tangential[kDim];
+                for (int a = 0; a < kDim; ++a) {
+                    force[a] -= c_pair * v_normal_scalar * normal[a];
+                    v_tangential[a] = v_relative[a] - v_normal_scalar * normal[a];
+                }
+                // Coulomb friction, capped by the normal spring force -- this is
+                // what gives the material a yield stress and hence an angle of
+                // repose. Without it a pile has no static strength and spreads
+                // until flat.
+                add_tangential_friction(force, v_tangential, mu * f_pair, c_pair);
             }
         }
 
