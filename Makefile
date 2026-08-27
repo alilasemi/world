@@ -38,6 +38,7 @@ exe_profile = profile
 exe_stability = stability_and_accuracy
 exe_model_problem = model_problem
 exe_dataset = dataset
+exe_chaos = chaos
 # Directories
 src_dir = src
 build_dir = build
@@ -72,6 +73,7 @@ main_obj = $(obj_dir)/broadcast.o
 stability_obj = $(obj_dir)/stability_and_accuracy.o
 model_problem_obj = $(obj_dir)/model_problem.o
 dataset_obj = $(obj_dir)/dataset.o
+chaos_obj = $(obj_dir)/chaos.o
 
 # -- External dependencies (auto-built if missing) -- #
 glfw_lib = external/glfw/build/lib/libglfw3.a
@@ -139,6 +141,9 @@ model_problem: deps directories $(bin_dir)/$(exe_model_problem)
 .PHONY: dataset
 dataset: deps directories $(bin_dir)/$(exe_dataset)
 
+.PHONY: chaos
+chaos: deps directories $(bin_dir)/$(exe_chaos)
+
 .PHONY: test
 test: deps directories $(bin_dir)/$(test_exe)
 	./$(bin_dir)/$(test_exe)
@@ -190,6 +195,9 @@ $(bin_dir)/$(exe_model_problem): $(model_problem_obj) $(obj)
 	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(exe_dataset): $(dataset_obj) $(obj)
+	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
+
+$(bin_dir)/$(exe_chaos): $(chaos_obj) $(obj)
 	$(NVCC) $(flags) $(cuda_flags) -o $@ $^ $(ldlibs) $(cuda_ldlibs)
 
 $(bin_dir)/$(test_exe): $(test_obj) $(obj)
