@@ -122,8 +122,13 @@ Tests mutate `sim.host_state[...]`/`sim.device_state` etc. directly (all public)
 
 ## Known issues
 
-- The Makefile's pattern rules (`$(obj_dir)/%.o: $(src_dir)/%.cpp`/`.cu`) only depend on the matching source file, not on any headers it includes — there's no `-MMD`/`.d`-file dependency tracking. Editing a widely-included header (e.g. `particle_dynamics.h`) and then doing an incremental `make` can silently link a stale `.o` (compiled against the old struct layout) against a freshly-rebuilt one, corrupting the stack at runtime (observed as "stack smashing detected" with garbage timing values). `make clean` before rebuilding after a header change is the reliable workaround.
-- `find_neighbors_kernel.cu`'s `fill_cells_kernel` correctly skips writing an overflowing particle into `particles_in_cell` once a cell's `slot >= particles_per_cell`, but it still `atomicAdd`s `num_per_cell[occ_idx]` for that particle regardless — so `num_per_cell[occ_idx]` isn't clamped to `particles_per_cell` and can end up reporting more entries than the cell's row actually holds. `find_neighbors_kernel`'s per-cell loop trusts `num_per_cell[occ_idx]` as its bound (`for (slot = 0; slot < count; ...)`), so if a cell's real occupancy ever exceeds `particles_per_cell`, that loop reads past the end of the cell's `particles_in_cell` row into unrelated/uninitialized memory instead of just missing the excess particles cleanly. Not hit under any currently-checked-in config (all keep `particles_per_cell` comfortably above real per-cell occupancy); would need `num_per_cell[occ_idx]` clamped to `particles_per_cell` (or the loop bound `min`'d against it) to fix.
+Both previously-listed issues were fixed on 2026-08-25 and are recorded here only so the fixes aren't
+undone by someone reading old notes:
+
+- **Header dependency tracking now exists.** The pattern rules pass `-MMD -MP` (`$(dep_flags)`) and the
+  Makefile `-include`s the generated `build/obj/*.d`. Editing a widely-included header rebuilds exactly
+  the objects that include it, so `make clean` is no longer required after a header change. Verified by
+  touching `particle_dynamics.h` and confirming only `particle_dynamics.o` and `profiling_sim.o` rebuild.
 
 ## GPU verification
 
