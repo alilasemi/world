@@ -173,7 +173,7 @@ def main() -> int:
     args = parser.parse_args()
 
     data = dataset_io.load(args.directory)
-    grids = data.grids[data.ok]
+    grids = data.usable()
     theta = data.parameters[data.ok]
     if args.max_rollouts:
         grids, theta = grids[:args.max_rollouts], theta[:args.max_rollouts]

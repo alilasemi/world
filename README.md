@@ -87,14 +87,14 @@ method.
 | front radius against the laboratory correlation of Lube et al. | 13 to 19 percent short |
 | sliding friction against the analytic answer | -4.50 m/s^2 against -4.905 |
 | **Chaos** | |
-| amplification of a 10 micron perturbation of every grain | 3806x, to 1.9 grain diameters |
-| per-grain predictability horizon | 0.62 s |
-| coarse-field difference over the same interval | 0.086 |
-| irreducible scatter of the coarse field about its mean | 0.154 |
+| amplification of a 50 micron perturbation of every grain | 2191x, to 1.10 grain diameters |
+| per-grain predictability horizon | 1.38 s |
+| coarse-field difference over the same interval | 0.046 |
+| irreducible scatter of the coarse field about its mean | 0.0345 |
 | **World model** | |
-| autoregressive rollout error at t = 1.0 s, held out | 0.174, i.e. 1.13x the scatter |
-| against a persistence baseline | 1.531 |
-| cost of the reduced representation alone | 0.108 |
+| autoregressive rollout error at t = 2.0 s, held out | 0.153, i.e. 4.4x the scatter |
+| against a persistence baseline | 1.132 |
+| cost of the reduced representation alone | 0.058 |
 | overlapping grain pairs in the decoded state | 0 percent |
 
 ## 3. The solver
@@ -142,7 +142,7 @@ displacement of every grain's initial position, drawn from an independent random
 the base packing stays identical across members.
 
 <div align="center">
-  <img src="assets/screenshots/predictability.png" width="94%"
+  <img src="assets/screenshots/predictability_heavy64.png" width="94%"
        alt="Per-grain separation growing exponentially and saturating, beside the bounded difference of the coarse field">
 </div>
 
@@ -152,36 +152,36 @@ Right, the relative difference of the coarse mass field for the same two ensembl
 <code>build/bin/chaos</code> and <code>surrogate/plot_chaos.py</code>.
 </em></p>
 
-At a perturbation of one thousandth of a grain radius, 10 microns, the root mean square
-per-grain separation grows from 1e-5 m to 3.81e-2 m, an amplification of 3806, and reaches 90
-percent of that plateau at t = 0.62 s. That time is the per-grain predictability horizon.
+At a perturbation of one thousandth of a grain radius, 50 microns, the root mean square
+per-grain separation grows from 8.7e-5 m to 1.10e-1 m, an amplification of 2191, and reaches 90
+percent of that plateau at t = 1.38 s. That time is the per-grain predictability horizon.
 
 The growth is not a single exponential, and quoting one rate for it would misrepresent the
-measurement. The local rate `d(ln D)/dt` is 23.3 per second over [0.02, 0.06] s while the
-contact network rearranges, settles to 5.6 to 6.4 per second over [0.14, 0.60] s, and collapses
-to 0.17 per second after 0.60 s. The sustained value is the one to quote. Saturation is caused
-by jamming: growth stops when the deposit settles and friction locks the
-packing.
+measurement. The local rate `d(ln D)/dt` is 19.7 per second over [0.02, 0.10] s while the
+contact network rearranges, settles to 6.0 to 6.5 per second over [0.10, 0.80] s, and collapses
+to 1.3 and then 0.13 per second after that. The sustained value is the one to quote. Saturation
+is caused by jamming: growth stops when the deposit settles and friction locks the packing,
+which is why the plateau sits at 1.10 grain diameters and not at the scale of the assembly.
 
 Over the same interval, and past the point at which the per-grain separation has saturated, the
-coarse mass fields of two ensemble members differ by 0.086 and their centers of mass by 0.009 of
+coarse mass fields of two ensemble members differ by 0.046 and their centers of mass by 0.011 of
 a grid node. The distance between the two panels is the whole argument for predicting a coarse
 field instead of a trajectory: chaos destroys the estimator and leaves the quantity intact.
 
 The same ensemble supplies the number a model has to be judged against. At a perturbation of a
 quarter of a grain radius the members are distinct realizations of one macroscopic state, and
-the root mean square deviation of a realization about the ensemble mean is 0.154 for the
-parameter box and horizon used in Section [5](#5-the-world-model).
+the root mean square deviation of a realization about the ensemble mean is 0.0345 for the
+parameter box, latent resolution, and horizon used in Section [5](#5-the-world-model).
 
 ## 5. The world model
 
 The model predicts one state of the material from the previous one, works in a compact
 representation of the field instead of in grain coordinates, and is rolled forward from a single
-observation of the initial state. Section [4](#4-what-is-predictable) is why it is built that
-way: grain coordinates are unknowable past 0.62 s, and the coarse field is not.
+observation of the initial state. It is built this way due to the results of Section [4](#4-what-is-predictable),
+which show that grain coordinates are unknowable past 1.38 s, whereas the coarse field is still predictable.
 
 The state the model works in is a coarse field with four channels, mass density and the three
-components of momentum density, deposited from the particles onto a grid of 32 by 32 by 16
+components of momentum density, deposited from the particles onto a grid of 64 by 64 by 16
 nodes, coarser along z because the outcome is a thin layer, by the trilinear, or cloud-in-cell,
 weights [[17]](#ref17) that the material point method uses for its particle to grid transfer
 [[18]](#ref18). The momentum channels are not optional: two piles of identical shape and
@@ -201,35 +201,32 @@ more scenario-dependent, so whichever channel were scaled larger would dominate
 the spectrum and the reported energy captured would have less meaning.
 
 <div align="center">
-  <img src="assets/screenshots/pod_spectrum.png" width="94%"
+  <img src="assets/screenshots/pod_spectrum_heavy64.png" width="94%"
        alt="Singular value spectra and cumulative energy per channel, and the collapse of the momentum scale with time">
 </div>
 
 <p align="center"><em>
 Left and center, the spectrum and cumulative captured variance for each of the four channels of
 the settled field. Right, the ratio of momentum scale to mass scale against time. Produced by
-<code>surrogate/pod_study.py --per-checkpoint</code>.
+<code>surrogate/pod_study.py</code>.
 </em></p>
 
-It is important to note that, asked at
-the final checkpoint, the momentum channels look unlearnable, with a held-out reduction error of
-about 0.98. The reason is that there is nothing left to predict: the ratio of root mean square
-momentum density to root mean square mass density falls from 2.29 at t = 0.2 s to 0.018 at
-t = 2.0 s, so the settled deposit is at rest and its momentum field is residual numerical creep.
-Asked while the material moves, momentum is as learnable as mass, with a held-out error at 20
-modes of 0.35 to 0.40 at t = 0.2 s against 0.34 for mass.
+While the material is moving, momentum is about as representable as mass: at rank 24 the
+held-out reconstruction error at t = 0.2 s is 0.040 for a momentum channel against 0.028 for
+mass. Once the deposit has settled the two diverge, 0.185 against 0.075, because what remains of
+the momentum field is slow creep with little spatial structure for a low-rank basis to hold.
 
 ### 5.1 Rolling the model forward
 
 The model maps the current reduced state and the three material parameters to the reduced state
-one interval of 0.10 s later, through one Gaussian process (GP) regression [[19]](#ref19) per
+one interval of 0.20 s later, through one Gaussian process (GP) regression [[19]](#ref19) per
 latent coordinate, and is then fed its own output. It is fitted on 1416 rollouts and evaluated
 on 120 held out; the split is by rollout and never by transition, since consecutive transitions
 from one rollout are strongly correlated and splitting them at random leaks a test rollout's own
 trajectory into training.
 
 <div align="center">
-  <img src="assets/screenshots/rollout_error.png" width="72%"
+  <img src="assets/screenshots/rollout_error_heavy64.png" width="72%"
        alt="Rollout error against time, with one-step, reduction-cost, persistence, and irreducible-scatter references">
 </div>
 
@@ -240,16 +237,16 @@ The green line is the irreducible scatter measured in Section
 rollout has to be read against. Produced by <code>surrogate/plot_rollout.py</code>.
 </em></p>
 
-| at t = 1.0 s, mass field, held out | relative error |
+| at t = 2.0 s, mass field, held out | relative error |
 |---|---|
-| cost of the reduced representation alone | 0.108 |
-| one step from truth | 0.109 |
-| autoregressive rollout | 0.174 |
-| persistence baseline | 1.531 |
-| irreducible scatter of the simulation | 0.154 |
+| cost of the reduced representation alone | 0.058 |
+| one step from truth | 0.060 |
+| autoregressive rollout | 0.153 |
+| persistence baseline | 1.132 |
+| irreducible scatter of the simulation | 0.0345 |
 
-The rollout sits at 1.13 times the irreducible scatter, nine autoregressive steps out, against a
-persistence baseline of 1.531. The scatter itself is the root mean square deviation of a
+The rollout sits at 4.4 times the irreducible scatter, nine autoregressive steps out, against a
+persistence baseline of 1.132. The scatter itself is the root mean square deviation of a
 realization about the ensemble mean. The value is specific to a configuration and a horizon, so
 `surrogate/fit_dynamics.py` takes it as an argument rather than hardcoding one.
 
@@ -259,26 +256,30 @@ follows from encoding the truth and decoding it and is independent of the regres
 error is the error from propagating the model by one step, then subtracting the truncation
 error. The compounding error is the rollout error minus the error from propagating one step.
 Therefore, this provides a clear path for model improvement:
-  - if truncation error is large, increase the number of svd modes. More training data does nothing.
+  - if truncation error is large, increase the number of POD modes. More training data does nothing.
   - if one-step error is large, improve the regressor, add training data.
   - if the compounding error is large, the model is drifting off-distribution.
     Fixes are fewer steps for the same horizon (a larger interval), a training
     objective defined over multiple steps, or noise injection during fitting.
 
-The error peaks at 0.3 to 0.4 s and then falls, which is a physical signature: impact and
-spreading is the hardest part of the trajectory to predict, and the deposit settles afterwards.
+The rollout error grows monotonically with horizon, since compounding accumulates, and it is
+compounding that dominates: 0.093 of the 0.153 total at t = 2.0 s, against 0.058 for truncation
+and 0.002 for the one-step regressor. The one-step error does peak early and then fall, 0.105 at
+t = 0.4 s down to 0.060 at t = 2.0 s, due to the fact that impact and spreading is
+the hardest part of the trajectory to predict, and the deposit settles afterwards.
 
 <div align="center">
-  <img src="assets/screenshots/rollout_fields.png" width="98%"
+  <img src="assets/screenshots/rollout_fields_heavy64.png" width="98%"
        alt="Simulation, rollout prediction, difference, and modal coefficients for the median and worst held-out rollout">
 </div>
 
 <p align="center"><em>
-The rollout decoded back to the mass field at t = 1.0 s, nine steps from the observed initial
+The rollout decoded back to the mass field at t = 2.0 s, nine steps from the observed initial
 field, for the median and the worst of the 120 held-out rollouts. An error number says how wrong
-the model is; this says how it is wrong. The worst case predicts a compact pile where the
-simulation produced a broader ring, which the difference panel shows as a positive core inside a
-negative annulus. Produced by <code>surrogate/plot_rollout.py</code>.
+the model is; this says how it is wrong. The median is visually indistinguishable from the
+simulation. The worst case predicts a round pile where the simulation produced a more diffuse
+deposit, which the difference panel shows as a positive core inside a negative annulus.
+Produced by <code>surrogate/plot_rollout.py</code>.
 </em></p>
 
 ### 5.2 Decoding back to particles
@@ -292,35 +293,45 @@ position with the deposit weights. Decoding an encoding therefore reproduces the
 configuration.
 
 <div align="center">
-  <img src="assets/screenshots/decoded_particles.png" width="98%"
+  <img src="assets/screenshots/decoded_particles_heavy64.png" width="98%"
        alt="Decoded configurations from the two samplers, their nearest-neighbor distributions, and the energy history after restarting the solver from each">
 </div>
 
 <p align="center"><em>
-Top row, the sampled configuration at t = 1.0 s and the distribution of nearest-neighbor
+Top row, the sampled configuration at t = 2.0 s and the distribution of nearest-neighbor
 distances in units of a grain diameter. Bottom row, the same configurations at grain scale and
 the total energy after the solver is restarted from each. Produced by
 <code>surrogate/plot_decode_comparison.py</code>.
 </em></p>
 
 Whether the decoded state can be handed back to the solver is decided by the sampler, and the
-figure measures it. Node spacing is about three grain diameters and roughly thirty grains share
-a node, so placing them uniformly inside a cell leaves 73 percent of grains closer than one
-diameter to a neighbor; the spurious elastic energy stored in those overlaps gives an initial
-total of 14,893.5, ninety percent of which discharges within 0.01 s as a violent transient.
-Dart throwing against the density field, which is the minimum-separation construction of
-Bridson [[20]](#ref20) with a prescribed density in place of a uniform one, leaves no
-overlapping pairs, a median nearest-neighbor distance of 1.15 diameters, an initial energy of
-1,270.8, and an energy history that decreases monotonically for a full second. The solver reads
-such a state back from a file, which closes the loop from simulation to field to prediction to
-simulation.
+figure measures it. Node spacing is 3.17 grain diameters and about twelve grains share a node,
+so placing them uniformly inside a cell leaves 94 percent of grains closer than one diameter to
+a neighbor; the spurious elastic energy stored in those overlaps gives an initial total of
+3.59e7, of which 86 percent discharges within the first 0.1 s as a violent transient. Dart
+throwing against the density field, which is the minimum-separation construction of Bridson
+[[20]](#ref20) with a prescribed density in place of a uniform one, leaves no overlapping pairs,
+a median nearest-neighbor distance of 1.03 diameters, an initial energy of 4.75e6, and a decay
+that loses only 1.9 percent over the first 0.1 s. The solver reads such a state back from a
+file, which closes the loop from simulation to field to prediction to simulation.
 
-One further detail is not optional. Nodes below two percent of peak density have to be discarded
-and the remainder renormalized, because a truncated reduction leaves a diffuse halo of
-grains where the density is near zero, at which point dividing momentum by mass assigns them
-enormous velocities. At t = 0.70 s the threshold takes the error in the spatial standard
-deviation from 0.0921 m to 0.0063 m and the sampled kinetic energy from 141.4 to 7.6 against a
-true value of 3.62.
+The separation is not free, and at this grain count the price is visible. The sampler cannot
+exceed the local packing limit, so where the predicted field asks for more density than
+physically fits it displaces grains outward and, in the middle of the trajectory, cannot place
+all of them, limited to 27,091 of 32,000 at t = 0.6 s, recovering to all 32,000 once the deposit spreads.
+A field that demands density above the packing limit is locally unphysical, so a shortfall is
+information rather than a defect, which is why placed and requested are both reported. The
+minimum separation placement incurs some error, seen at t = 2.0 s where the error in the centroid is 0.026 m for uniform placement
+against 0.203 m for minimum separation. Uniform placement is therefore the one to use for
+visualization and bulk statistics, and minimum separation whenever the state has to be
+integrated.
+
+Nodes below two percent of peak density have to be discarded
+and the remainder renormalized, because a truncated reduction leaves a diffuse halo of grains
+where the density is near zero, at which point dividing momentum by mass assigns them enormous
+velocities. At t = 2.0 s the threshold takes the error in the spatial standard deviation from
+0.079 m to 0.045 m and the sampled kinetic energy from 53,314 to 10,739 against a true value of
+6,480.
 
 ## 6. Performance
 
@@ -351,13 +362,13 @@ neighbor array overruns the 4 MB last-level cache of this GPU. The bottleneck is
 with arithmetic to spare, which is where the next optimization belongs.
 
 It is worth being transparent about how modest the speedup over the solver is. One
-autoregressive step advances 0.10 s of simulated time and costs 42 ms for a single trajectory,
-or 10.5 ms per trajectory in a batch of 120, against 73 ms for the solver to cover the same
-interval for the 3375-grain configuration the model was trained on. That is 1.7x unbatched and
-7.0x batched, where a learned surrogate is usually expected to buy orders of magnitude. This cost is
-due to the exact GP inference over 900 training points and 168 outputs. One
-advantage however is that the cost is independent of both grain count and timestep, while the solver cost grows
-with each, so the comparison moves in the model's favor as the simulation gets harder.
+autoregressive step advances 0.20 s of simulated time and costs 44 ms for a single trajectory,
+or 11.2 ms per trajectory in a batch of 120, against 123 ms for the solver to cover the same
+interval for the same 32,000 grains. That is 2.8x unbatched and 11x batched, where a learned
+surrogate is usually expected to buy orders of magnitude. This cost is due to the exact GP
+inference over 900 training points and 168 outputs. One advantage however is that the cost is
+independent of both grain count and timestep, while the solver cost grows with each, so the
+comparison moves in the model's favor as the simulation gets harder.
 
 ## 7. Verification and validation
 

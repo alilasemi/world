@@ -46,6 +46,18 @@ class Dataset:
         """Boolean mask of usable rollouts."""
         return np.array([s == "ok" for s in self.status])
 
+    def usable(self) -> np.ndarray:
+        """Grids for the usable rollouts, WITHOUT copying when they all are.
+
+        `grids[ok]` is boolean fancy indexing, so it always allocates a full second array
+        even when the mask selects everything. At 16 GB that is what put two 29 GB Python
+        processes in front of the OOM killer. Every dataset generated so far has had zero
+        diverged rollouts, so the copy bought nothing; this returns the array itself in
+        that case and only pays for a copy when some rollout really has to be dropped.
+        """
+        mask = self.ok
+        return self.grids if mask.all() else self.grids[mask]
+
     def mass(self) -> np.ndarray:
         """Mass channel only: (rollouts, checkpoints, nx, ny, nz)."""
         return self.grids[:, :, MASS]
@@ -66,7 +78,7 @@ class Dataset:
                          where=mass > floor)
 
 
-def load(directory: str = "dataset") -> Dataset:
+def load(directory: str = "dataset", mmap: bool = True) -> Dataset:
     grid_path = os.path.join(directory, "grids.bin")
     manifest_path = os.path.join(directory, "manifest.csv")
 
@@ -78,10 +90,23 @@ def load(directory: str = "dataset") -> Dataset:
         num_rollouts, num_checkpoints, channels, nx, ny, nz, num_parameters = header.tolist()
         checkpoint_times = np.frombuffer(handle.read(num_checkpoints * 4), dtype="<f4")
         expected = num_rollouts * num_checkpoints * channels * nx * ny * nz
-        grids = np.fromfile(handle, dtype="<f4", count=expected)
-        if grids.size != expected:
-            raise ValueError(f"{grid_path}: expected {expected} floats, got {grids.size}")
-        grids = grids.reshape(num_rollouts, num_checkpoints, channels, nx, ny, nz)
+        offset = handle.tell()
+    actual = (os.path.getsize(grid_path) - offset) // 4
+    if actual != expected:
+        raise ValueError(f"{grid_path}: expected {expected} floats after the header, "
+                         f"found {actual}")
+    shape = (num_rollouts, num_checkpoints, channels, nx, ny, nz)
+    if mmap:
+        # Memory-MAPPED, not read. grids.bin is 16 GB for a 64^2 x 16 latent, and
+        # np.fromfile would put all of it in anonymous memory, which the kernel cannot
+        # evict -- so a second consumer, or one incautious copy, reaches the OOM killer.
+        # A memmap is file-backed page cache: it counts against nothing that must be kept
+        # resident, and slicing it materializes only the slice that is asked for.
+        grids = np.memmap(grid_path, dtype="<f4", mode="r", offset=offset, shape=shape)
+    else:
+        with open(grid_path, "rb") as handle:
+            handle.seek(offset)
+            grids = np.fromfile(handle, dtype="<f4", count=expected).reshape(shape)
 
     names: list[str] = []
     parameters: list[list[float]] = []

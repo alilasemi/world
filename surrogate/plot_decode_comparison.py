@@ -53,6 +53,9 @@ def main() -> int:
     pos_p, _, t = load_snapshot(args.poisson, args.snapshot)
     pos_u, _, _ = load_snapshot(args.uniform, args.snapshot)
 
+    # The domain is a configuration choice (2 m in the first study, 20 m in the heavy one),
+    # so the top-row extent is taken from the particles rather than hardcoded.
+    extent = 1.05 * max(np.abs(pos_p[:, :2]).max(), np.abs(pos_u[:, :2]).max())
     fig, axes = plt.subplots(2, 3, figsize=(16, 9.5))
 
     # --- row 0: domain-scale top views, where the two are indistinguishable ---
@@ -62,7 +65,7 @@ def main() -> int:
                              c="tab:orange" if col == 0 else "tab:blue")
         axes[0, col].set(title=f"{label}: full domain, t={t:.2f}s",
                          xlabel="x (m)", ylabel="y (m)", aspect="equal",
-                         xlim=(-1, 1), ylim=(-1, 1))
+                         xlim=(-extent, extent), ylim=(-extent, extent))
         axes[0, col].grid(alpha=0.2)
 
     # --- nearest-neighbour distribution: the quantitative discriminator ---
@@ -107,9 +110,10 @@ def main() -> int:
     axes[1, 2].set(xlabel="time after restart (s)", ylabel="total energy",
                    title="Solver restarted from the decoded state")
     axes[1, 2].grid(alpha=0.3, which="both"); axes[1, 2].legend(fontsize=9)
+    peak = axes[1, 2].get_ylim()[1]
     axes[1, 2].annotate("spurious elastic energy in\noverlapping contacts, released\n"
                         "as a violent transient",
-                        xy=(0.0, 14893), xytext=(0.055, 6000), fontsize=9,
+                        xy=(0.0, peak * 0.75), xytext=(0.25, peak * 0.18), fontsize=9,
                         arrowprops=dict(arrowstyle="->", lw=1.1))
 
     fig.suptitle("Decoding a latent rollout to particles: the sampler determines whether the "

@@ -91,7 +91,7 @@ def main() -> int:
     args = parser.parse_args()
 
     data = dataset_io.load(args.directory)
-    grids = data.grids[data.ok]
+    grids = data.usable()
     theta = data.parameters[data.ok]
     names = data.parameter_names
     fields = grids[:, -1, MASS].reshape(len(grids), -1)

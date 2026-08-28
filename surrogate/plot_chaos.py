@@ -50,6 +50,7 @@ def main() -> int:
     styles = {args.small: ("tab:blue", r"$\epsilon = 10^{-3}\,r$  (near-identical start)"),
               args.large: ("tab:red", r"$\epsilon = 0.25\,r$  (distinct realizations)")}
 
+    field_peak = 0.0
     for path, (color, label) in styles.items():
         if not os.path.exists(path):
             continue
@@ -61,6 +62,7 @@ def main() -> int:
         axes[1].plot(times, field.mean(axis=0), color=color, lw=2, label=label)
         axes[1].fill_between(times, field.min(axis=0), field.max(axis=0),
                              color=color, alpha=0.18, lw=0)
+        field_peak = max(field_peak, float(field.max()))
 
         if path == args.small:
             mean_grain = grain.mean(axis=0)
@@ -77,7 +79,8 @@ def main() -> int:
     axes[0].legend(fontsize=9, loc="lower right")
 
     axes[1].set(xlabel="time (s)", ylabel=r"relative $\ell^2$ difference of mass field",
-                title="Coarse field: bounded difference", ylim=(0, 0.62))
+                title="Coarse field: bounded difference",
+                ylim=(0, 1.15 * field_peak))
     axes[1].grid(alpha=0.3)
     axes[1].legend(fontsize=9, loc="upper right")
 

@@ -49,6 +49,32 @@ PARAMETERS = [
     ("friction",     0.20,  0.60,  "material"),
 ]
 
+# A SECOND parameter set, for the 32,000-grain study at dt=1e-3 (dataset/blob_heavy.yaml).
+# Selected with --preset heavy; the default preset above is unchanged.
+#
+# The grain mass range is set by the timestep, not by taste. The contact period is
+# 2*pi*sqrt(m_reduced/k) with k = max_force/radius = 1e6 N/m, so 20.3 kg gives exactly 20 steps
+# per contact at dt=1e-3 and 45.6 kg gives 30. Below about 20 steps this solver does not
+# integrate a contact; see the probe record in CLAUDE.md.
+#
+# Throw velocities are ~10x the first study's, on purpose. There the throw was +/-0.7 m/s
+# against a 4 m/s impact speed, so the ACTION was a small perturbation on a splat. Here the
+# blob is released 0.2-0.8 m above the floor and thrown at up to 1.5 m/s per horizontal axis,
+# which moves the deposit centroid by ~10 grain diameters, so the action dominates the outcome.
+# Probed at the worst corner (vx=vy=1.5, vz=-1.0, heaviest grain): the deposit still clears the
+# side walls by 1.37x with no grain within two diameters of one.
+HEAVY_PARAMETERS = [
+    ("throw_vx",    -1.5,   1.5,   "action"),
+    ("throw_vy",    -1.5,   1.5,   "action"),
+    ("throw_vz",    -1.0,   1.0,   "action"),
+    ("release_z",   -9.8,  -9.2,   "action"),
+    ("grain_mass",  20.3,  45.5,   "material"),
+    ("restitution",  0.15,  0.60,  "material"),
+    ("friction",     0.20,  0.60,  "material"),
+]
+
+PRESETS = {"blob": None, "heavy": HEAVY_PARAMETERS}   # "blob" resolves to PARAMETERS below
+
 # Ranges narrowed ~40% from the first dynamics study, deliberately. An exact
 # Gaussian process is O(n^3) per likelihood evaluation, so it cannot consume an
 # arbitrarily large database however many rollouts are generated; what a bigger
@@ -90,11 +116,15 @@ def main() -> int:
                         help="number of design points (default: the pilot size)")
     parser.add_argument("--seed", type=int, default=20260825)
     parser.add_argument("--out", default="dataset/design.csv")
+    parser.add_argument("--preset", choices=sorted(PRESETS), default="blob",
+                        help="'blob' is the original 3375-grain study; 'heavy' is the "
+                             "32,000-grain study that runs at dt=1e-3")
     args = parser.parse_args()
 
-    unit = sample_unit(args.rollouts, len(PARAMETERS), args.seed)
+    parameters = PRESETS[args.preset] or PARAMETERS
+    unit = sample_unit(args.rollouts, len(parameters), args.seed)
     columns = []
-    for index, (_, low, high, _) in enumerate(PARAMETERS):
+    for index, (_, low, high, _) in enumerate(parameters):
         columns.append(low + (high - low) * unit[:, index])
     design = np.column_stack(columns)
 
@@ -104,12 +134,13 @@ def main() -> int:
         # lineterminator="\n": the default "\r\n" leaves a stray CR on the last
         # field of every line for any reader that splits on "\n" alone.
         writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow([name for name, _, _, _ in PARAMETERS])
+        writer.writerow([name for name, _, _, _ in parameters])
         for row in design:
             writer.writerow([f"{value:.9g}" for value in row])
 
-    print(f"wrote {args.rollouts} design points x {len(PARAMETERS)} parameters to {args.out}")
-    for index, (name, low, high, kind) in enumerate(PARAMETERS):
+    print(f"wrote {args.rollouts} design points x {len(parameters)} parameters "
+          f"to {args.out} (preset '{args.preset}')")
+    for index, (name, low, high, kind) in enumerate(parameters):
         values = design[:, index]
         print(f"  {name:<12} [{low:>6.2f}, {high:>6.2f}] {kind:<9}"
               f" sampled min={values.min():>7.3f} max={values.max():>7.3f}")

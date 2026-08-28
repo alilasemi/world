@@ -139,8 +139,7 @@ def main() -> int:
     args = parser.parse_args()
 
     data = dataset_io.load(args.directory)
-    usable = data.ok
-    grids = data.grids[usable]
+    grids = data.usable()
     print(f"loaded {grids.shape[0]} usable rollouts, latent {tuple(grids.shape[2:])}, "
           f"{data.grids.shape[1]} checkpoints")
 
@@ -204,11 +203,16 @@ def main() -> int:
         axes[2].set(xlabel="time (s)", ylabel="RMS |rho*u| / RMS |rho|",
                     title="Momentum scale collapses as the pile settles")
         axes[2].grid(alpha=0.3)
-        axes[2].annotate("momentum is the dominant\npart of the state here",
+        # Annotate the measured ratios rather than an interpretation of them. An earlier
+        # version said "numerical creep" at the last checkpoint, which was true when the
+        # ratio fell to 0.018 and false at 0.15: whether the residual motion is creep or
+        # real slow spreading depends on the configuration, so let the number say it.
+        axes[2].annotate(f"momentum is {ratios[0]:.1f}x the mass\nscale here: the dominant\n"
+                         "part of the state",
                          xy=(data.checkpoint_times[0], ratios[0]),
-                         xytext=(0.35, 0.45), textcoords="axes fraction",
+                         xytext=(0.05, 0.42), textcoords="axes fraction",
                          arrowprops=dict(arrowstyle="->", lw=1), fontsize=9)
-        axes[2].annotate("...and is numerical creep here",
+        axes[2].annotate(f"...and {ratios[-1]:.3f}x here",
                          xy=(data.checkpoint_times[-1], ratios[-1]),
                          xytext=(0.30, 0.12), textcoords="axes fraction",
                          arrowprops=dict(arrowstyle="->", lw=1), fontsize=9)

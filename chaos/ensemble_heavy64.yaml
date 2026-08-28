@@ -1,0 +1,74 @@
+# Ensemble configuration for the PREDICTABILITY measurement on the 32,000-grain study,
+# at the 64 x 64 x 16 latent of dataset/blob_heavy64.yaml.
+#
+# Physics identical to dataset/blob_heavy.yaml, at the centre of that design's parameter box.
+# Kept alongside chaos/ensemble.yaml, which is the 3,375-grain version; neither replaces the
+# other, and the two floors are NOT interchangeable. The floor is specific to a parameter box
+# and a horizon, and reusing a stale one flatters a model.
+#
+# The chaos driver reuses dataset.sim_time as the horizon and dataset.checkpoints for the time
+# resolution, with far more checkpoints than the dataset uses.
+
+simulation:
+  dt: 0.001
+  collision_grid_size_x: 200
+  collision_grid_size_y: 200
+  collision_grid_size_z: 31
+  particles_per_cell: 8
+  threads_per_block: 256
+  density_grid_size_x: 64
+  density_grid_size_y: 64
+  density_grid_size_z: 16
+domain:
+  x_min: -10.0
+  x_max: 10.0
+  y_min: -10.0
+  y_max: 10.0
+  z_min: -10.0
+  z_max: -6.950
+physics:
+  gravity: 9.81
+  particle_radius: 0.05
+  max_force: 50000.0
+  floor_z: -10.0
+  ceiling_z: -6.950
+  wall_x_min: -10.0
+  wall_x_max: 10.0
+  wall_y_min: -10.0
+  wall_y_max: 10.0
+  restitution: 0.375       # mid-range
+  friction: 0.4            # mid-range
+materials:
+  masses: [0.0, 32.9]      # mid-range: 25 steps per contact at dt=1e-3
+initialization:
+  type: cube
+  x0: -2.0200
+  y0: -2.0200
+  z0: -9.5000              # mid-range release
+  cube_length_x: 4.0400
+  cube_length_y: 4.0400
+  cube_length_z: 2.0200
+  jitter: 0.25
+  seed: 12345           # SAME every rollout: common random numbers
+  # A representative throw from the middle of the design space. The scatter measured here is
+  # only a valid denominator for the model's error if it is measured at a theta the model was
+  # trained on, and a dropped blob (zero velocity) is not one.
+  vx0: 0.75
+  vy0: -0.55
+  vz0: 0.25
+  # Displacement applied to every grain on top of the jittered lattice, as a fraction of the
+  # particle radius, from an independent random stream so the base packing is identical across
+  # members. Overridden on the command line for the two regimes: ~1e-3 isolates Lyapunov growth
+  # from a near-identical start, ~0.25 measures the scatter between distinct realizations of the
+  # same macroscopic state, which is the floor a model is compared against.
+  perturbation: 0.25
+  perturbation_seed: 1
+  particle_material: 1
+drivers:
+  steps_per_frame: 100
+  profiling_outer_iters: 20
+  profiling_steps_per_iter: 100
+  kernel_timing: true
+dataset:
+  sim_time: 2.0
+  checkpoints: 100

@@ -1,0 +1,98 @@
+# LATENT RESOLUTION VARIANT of dataset/blob_heavy.yaml: 64 x 64 x 16 nodes instead of
+# 32 x 32 x 16, with the domain, the physics, and the design all identical, so the two datasets
+# differ in one thing only. Kept alongside it; neither replaces the other.
+#
+# Why: at 32 nodes over a 20 m domain the node spacing is 6.45 grain diameters, exactly twice
+# the 3.23 of the 3,375-grain study, so the comparison between them was not like for like. The
+# coarser grid averages more grains per node, which measurably depresses the irreducible floor:
+# 0.0198 at 32 nodes, 0.0274 at 48, 0.0343 at 64, 0.0478 at 96 (measured, 16-member ensembles).
+# 64 nodes restores 3.17 diameters and makes the floor comparable to the first study's.
+#
+# Cost: grids.bin is 16.1 GB instead of 4.0 GB, and the basis build needs --basis-stride 2 to
+# stay inside 30 GB of RAM.
+#
+# Base configuration for the 32,000-GRAIN latent dynamics dataset, at dt=1e-3.
+#
+# This is a SECOND study, not a replacement for dataset/blob_dynamics2.yaml. That one uses
+# 3,375 grains at dt=1e-4 and is kept; everything derived from it is still valid on its own
+# terms. The reason for a second study is that 3,375 grains is a small assembly, and its
+# settled deposit is a near-monolayer: the median grain sits half a diameter above the floor,
+# so the latent's vertical resolution had nothing to resolve.
+#
+# WHY dt=1e-3 IS POSSIBLE HERE, and why raising the grain mass alone could not achieve it.
+# Peak interpenetration on impact obeys
+#
+#     overlap / radius = v * S * dt / (2 * pi * radius)
+#
+# with S the number of steps per contact period. At fixed impact speed v and fixed dt, overlap
+# is PROPORTIONAL to S: mass raises both together, in lockstep, because mass enters the contact
+# period and the overlap identically. At radius 0.01 m, demanding S=20 at dt=1e-3 gives an
+# overlap of 1.4 radii, i.e. grains pass through one another. The radius is the only lever, and
+# raising it to 0.05 m brings the overlap to 0.20-0.26 radii, which is better than the 0.44 of
+# the checked-in interactive configuration.
+#
+# So: radius 0.05 m, max_force 50 kN (stiffness 1e6 N/m), and a grain mass swept over
+# 20.3-45.5 kg, which is exactly 20-30 steps per contact at dt=1e-3.
+#
+# The blob is 40 x 40 x 20 grains rather than a cube. A 32^3 cube is 3.2 m tall, which forces a
+# tall z domain and leaves the 16 latent z-nodes spanning 2.5 grain diameters each; flattening
+# the blob shortens the domain to 3.05 m and brings that to 2.0 diameters, against 4.4 in the
+# first study. Probed outcome, zero throw: deposit 2.96 diameters deep at the median, aspect
+# ratio 7.6, side walls cleared by 2.08x. Worst corner of the design: cleared by 1.37x with no
+# grain within two diameters of a wall.
+#
+# Measured cost: 0.617 ms/step for 32,000 grains, so this configuration runs at 1.62x real
+# time, and one 2 s rollout costs 1.23 s. The training system and the real-time system are
+# therefore the same system, which was not true of the first study.
+
+simulation:
+  dt: 0.001
+  collision_grid_size_x: 200
+  collision_grid_size_y: 200
+  collision_grid_size_z: 31
+  particles_per_cell: 8
+  threads_per_block: 256
+  density_grid_size_x: 64
+  density_grid_size_y: 64
+  density_grid_size_z: 16
+domain:
+  x_min: -10.0
+  x_max: 10.0
+  y_min: -10.0
+  y_max: 10.0
+  z_min: -10.0
+  z_max: -6.950
+physics:
+  gravity: 9.81
+  particle_radius: 0.05
+  max_force: 50000.0
+  floor_z: -10.0
+  ceiling_z: -6.950
+  wall_x_min: -10.0
+  wall_x_max: 10.0
+  wall_y_min: -10.0
+  wall_y_max: 10.0
+  restitution: 0.3      # overridden per rollout by the design
+  friction: 0.4         # overridden per rollout by the design
+materials:
+  # masses[1] is overridden per rollout by the design's grain_mass column.
+  masses: [0.0, 20.2642]
+initialization:
+  type: cube
+  x0: -2.0200
+  y0: -2.0200
+  z0: -9.5000
+  cube_length_x: 4.0400
+  cube_length_y: 4.0400
+  cube_length_z: 2.0200
+  jitter: 0.25
+  seed: 12345           # SAME every rollout: common random numbers
+  particle_material: 1
+drivers:
+  steps_per_frame: 100
+  profiling_outer_iters: 20
+  profiling_steps_per_iter: 100
+  kernel_timing: true
+dataset:
+  sim_time: 2.0
+  checkpoints: 10

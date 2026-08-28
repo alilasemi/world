@@ -50,7 +50,7 @@ def main() -> int:
     test = fitted["test_rollouts"]
 
     data = dataset_io.load(fitted["directory"])
-    grids = data.grids[data.ok]
+    grids = data.usable()
     theta = data.parameters[data.ok]
     material = np.array([data.parameter_names.index(n)
                          for n in fitted["material_parameters"]])
@@ -99,9 +99,13 @@ def main() -> int:
     ax.annotate(f"irreducible scatter of the simulation, {args.floor:.3f}",
                 xy=(horizons[-1], args.floor), xytext=(horizons[-1], args.floor * 0.86),
                 color="darkgreen", fontsize=9, ha="right")
+    # Data-driven limits: the error scale depends on the configuration, and a limit taken from
+    # one study clips the curves of another off the axis entirely.
+    low = min(min(recon), min(teacher), min(rollout), args.floor)
+    high = max(max(persist), max(rollout))
     ax.set(xlabel="time (s)", ylabel=r"relative $\ell^2$ error, mass field",
            title="Latent dynamics rolled out autoregressively",
-           ylim=(0.08, 2.6))
+           ylim=(0.7 * low, 1.6 * high))
     ax.grid(alpha=0.3, which="both")
     ax.legend(fontsize=9, loc="upper right")
     fig.tight_layout()

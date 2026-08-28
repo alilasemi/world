@@ -564,8 +564,8 @@ Open `http://localhost:8080` in a browser. The page hits `/config` to learn `mod
 
 `src/broadcast.cpp` (compiled to `build/bin/world`) owns a `uWS::App` on port 8081 and a single `unique_ptr<ParticleDynamics>` sim instance (one sim per process, recreated on `"initialize"`). The protocol is a simple text-command / binary-response exchange:
 
-- Client sends `"initialize"` -> server allocates a new `ParticleDynamics`, then sends a fixed sequence of one-shot BINARY messages, each read by one step of the client's `Client.onmessage` state machine (states 0→5) before it enters the steady loop: `int32 n`, three `int32`s `collision_grid_size_x/y/z`, `int32 num_triangles` and `float particle_radius` (rendering constants), 6 floats `x_min/x_max/y_min/y_max/z_min/z_max` (domain bounds — same ones `is_stable()` checks server-side; the client uses these for its view volume and to count particles currently inside the domain vs. the total, shown on the HUD), then `n*kDim` floats of initial `(x, y, z)` positions. **Message sizes for n=32769: 4, 12, 4, 4, 24, 393228 bytes**, then `(n*kDim + 6)*4 = 393252` per `"run"` — verified end-to-end against the running server.
-- Client sends `"run"` -> server calls `sim->take_step()` `config.steps_per_frame` times (10 by default), then checks `sim->grid_overflow_count()` once (see "Collision grid" below) -- a nonzero count prints one line and `exit(1)`s the whole server rather than continuing to serve a diverged sim -- then unpacks state and sends back the updated `(x, y)` float buffer.
+- Client sends `"initialize"` -> server allocates a new `ParticleDynamics`, then sends a fixed sequence of one-shot BINARY messages, each read by one step of the client's `Client.onmessage` state machine (states 0→5) before it enters the steady loop: `int32 n`, three `int32`s `collision_grid_size_x/y/z`, `int32 num_triangles` and `float particle_radius` (rendering constants), 6 floats `x_min/x_max/y_min/y_max/z_min/z_max` (domain bounds — same ones `is_stable()` checks server-side; the client uses these for its view volume and to count particles currently inside the domain vs. the total, shown on the HUD), then `n*kDim` floats of initial `(x, y, z)` positions. **Message sizes for the checked-in `config.yaml`, n=32768: 4, 12, 4, 4, 24, 393216 bytes**, then `(n*kDim + 6)*4 = 393240` per `"run"` — re-verified end-to-end against the running server on 2026-08-27. (An earlier note here recorded n=32769, from a period when the cube was accompanied by a single "sled" particle; that material is gone, see the comment at `src/sim_config.h:94`, and the cube is exactly 32^3.)
+- Client sends `"run"` -> server calls `sim->take_step()` `config.steps_per_frame` times (10 by default), then checks `sim->grid_overflow_count()` once (see "Collision grid" below) -- a nonzero count prints one line and `exit(1)`s the whole server rather than continuing to serve a diverged sim -- then unpacks state and sends back the updated `(x, y, z)` float buffer.
 
 The client (`client/world.js`, `Client` class) mirrors this as a small state machine: `state 0` (waiting for `n`) -> `state 1` (waiting for `collisionGridSizeX/Y`) -> `state 2` (waiting for IC) -> `state 3+` (steady loop: draw, render, request next `"run"`). `client/index.js` is unrelated to the sim — it's just the Express static file/`,/config` server.
 
@@ -755,7 +755,8 @@ compute-sanitizer --tool initcheck ./build/bin/profile  # reads of uninitialized
 
 Hardware/toolchain as of 2026-08-25: CUDA 13.1 (`nvcc` at `/usr/local/cuda`), NVIDIA driver
 580.173.02, GeForce RTX 2080 (TU104, `sm_75`, 8 GB). Known-good 3D baseline with the checked-in
-`config.yaml` (32768 grains + 1 sled): `profile` prints ~35.8/14.6/1.03/0.19 ms for
+`config.yaml` (32768 grains, i.e. exactly 32^3, with no extra particle): `profile` prints
+~35.8/14.6/1.03/0.19 ms for
 grid/RHS/step/unpack over 100 steps (re-measured 2026-08-27, three runs, spread under 2%, i.e.
 0.514 ms/step and 1.95x real time), `make test` passes 11/11, and all three sanitizer tools report
 zero findings. (The pre-3D 2D baseline, for comparison, was ~53/16/1.6/0.33 ms at 100k grains.)
@@ -923,7 +924,16 @@ separate invocation from the launch.
 ## The demo configurations (`demos/`)
 
 `demos/fluid.yaml` and `demos/sand.yaml` differ in exactly one value, `physics.friction`, and
-`demos/grain_detail.yaml` is a 64-grain close-up for the renderer figure. All three are full
+`demos/grain_detail.yaml` is a 64-grain close-up for the renderer figure.
+
+**Two grain counts appear in the README on purpose, and they are not in conflict.** The
+performance scene is the checked-in `config.yaml`, a 32x32x32 cube, so **32,768** grains, and
+every throughput number comes from it. The animation scene is the demo column, 25x25x52, so
+**32,500** grains, and only the animation caption uses it. Grain count is a consequence of
+geometry rather than a setting: spacing is one diameter, fixed by `physics.particle_radius`, so
+`cube_length / (2*radius)` per axis fixes the total. The column count is not exactly 32,768
+because no factorization of 32,768 gives the aspect ratio the collapse experiment needs. Do not
+"reconcile" the two by editing one of them. All three are full
 configs, not overlays: `SimConfig`'s member defaults are *not* the values in the repo-root
 `config.yaml` (default `dt` is 1e-4, `init_jitter` 0, `cube_length_*` 0.2), so a partial demo config
 would silently run something else.

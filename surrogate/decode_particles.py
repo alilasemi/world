@@ -281,7 +281,7 @@ def main() -> int:
     names, material_names = art["parameter_names"], art["material_parameters"]
 
     data = dataset_io.load(art["directory"])
-    grids, theta = data.grids[data.ok], data.parameters[data.ok]
+    grids, theta = data.usable(), data.parameters[data.ok]
     test = art["test_rollouts"]
     r = int(test[args.rollout % len(test)])
     lo, hi, radius = read_domain(args.config)
