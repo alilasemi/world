@@ -8,11 +8,9 @@ instead of a trajectory:
   * the coarse mass field separates by a bounded, small amount over the same
     interval.
 
-The second panel also marks the measured surrogate errors. The point of doing so
-is that a surrogate error is uninterpretable on its own: the realization-to-
-realization scatter of the simulation itself is a floor no model conditioned only
-on theta can go below, and it is the only meaningful reference for the numbers
-reported by fit_surrogate.py.
+This figure measures the simulation alone. No model error is drawn on it: the
+comparison of a prediction against the realization-to-realization scatter belongs
+with the model, in fit_dynamics.py and plot_rollout.py.
 """
 
 from __future__ import annotations
@@ -22,15 +20,6 @@ import csv
 import os
 
 import numpy as np
-
-# Measured by surrogate/fit_surrogate.py, K=20, mass channel, held-out.
-TRUNCATION_ERROR = 0.243
-SURROGATE_ERROR = 0.381
-# Measured directly from chaos/final_fields.bin: the RMS relative deviation of a
-# realization from the ensemble mean at fixed theta. This -- not the pairwise
-# difference between two realizations -- is the floor for a model that predicts
-# the conditional mean, and the two differ by a factor of sqrt(2) (measured 1.46).
-IRREDUCIBLE_FLOOR = 0.168
 
 
 def load(path: str):
@@ -50,6 +39,7 @@ def main() -> int:
     parser.add_argument("--small", default="chaos/divergence_eps1e-3.csv")
     parser.add_argument("--large", default="chaos/divergence_eps0.25.csv")
     parser.add_argument("--out", default="surrogate/predictability.png")
+    parser.add_argument("--dpi", type=int, default=200)
     args = parser.parse_args()
 
     import matplotlib
@@ -86,20 +76,6 @@ def main() -> int:
     axes[0].grid(alpha=0.3, which="both")
     axes[0].legend(fontsize=9, loc="lower right")
 
-    axes[1].axhline(SURROGATE_ERROR, color="black", ls="-", lw=1.2)
-    axes[1].axhline(TRUNCATION_ERROR, color="black", ls=":", lw=1.2)
-    axes[1].axhspan(0.0, IRREDUCIBLE_FLOOR, color="green", alpha=0.10, lw=0)
-    axes[1].axhline(IRREDUCIBLE_FLOOR, color="green", ls="-", lw=1.6)
-    axes[1].annotate(f"surrogate  {SURROGATE_ERROR:.3f}",
-                     xy=(0.02, SURROGATE_ERROR), xytext=(0.60, SURROGATE_ERROR + 0.02),
-                     fontsize=9)
-    axes[1].annotate(f"POD truncation  {TRUNCATION_ERROR:.3f}",
-                     xy=(0.02, TRUNCATION_ERROR), xytext=(0.60, TRUNCATION_ERROR + 0.02),
-                     fontsize=9)
-    axes[1].annotate(f"irreducible floor  {IRREDUCIBLE_FLOOR:.3f}\n"
-                     "(no model can enter)",
-                     xy=(0.02, IRREDUCIBLE_FLOOR), xytext=(0.60, IRREDUCIBLE_FLOOR - 0.085),
-                     fontsize=9, color="darkgreen")
     axes[1].set(xlabel="time (s)", ylabel=r"relative $\ell^2$ difference of mass field",
                 title="Coarse field: bounded difference", ylim=(0, 0.62))
     axes[1].grid(alpha=0.3)
@@ -109,7 +85,7 @@ def main() -> int:
                  "(fixed $\\theta$, perturbed initial conditions)")
     fig.tight_layout()
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    fig.savefig(args.out, dpi=110)
+    fig.savefig(args.out, dpi=args.dpi)
     print(f"wrote {args.out}")
     return 0
 

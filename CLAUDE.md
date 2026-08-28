@@ -86,6 +86,32 @@ The ones that bite most often:
   confirms that every `[[n]]` is defined and every definition is cited.
 - **No strikethrough, no dev-log residue, no roadmap of completed items.** Status belongs in this
   file; the README states what is true now.
+- **Never write "runout".** It is vague and collides with "rollout", which the README uses for
+  autoregression. Say *front*, and *front radius* for the distance.
+- **Never write "backend"** (web-developer register). Say *the solver*.
+- **Never write "bit-identical"**; plain *identical* is what is meant.
+- **No implementation detail below the level of algorithm and mathematics.** `atomicCAS`,
+  `atomicAdd`, "atomic reduction", "device scalar", `uWebSockets`, `compute-sanitizer`,
+  `memcheck`/`racecheck`/`initcheck` are all too low for the README. A compacted uniform grid
+  whose storage grows with particle count is the right altitude; the four atomic passes that
+  implement it are not.
+- **Lead with the world model, and make both halves visible.** The showcase claim is that the
+  repository holds a world model *and* the simulation it was trained on. The opening paragraph
+  must begin with the world model, name it in the first line, and reach chaos only at the end.
+  Section titles carry the split: "The solver" and "The world model".
+
+**Two things are deliberately absent from the README and should stay absent.**
+
+- **The parameters-to-outcome regression (formerly "Stage 1")** and everything derived from it:
+  the 0.381 composed error, the 0.243 truncation floor, the per-mode coefficient of
+  determination, the uncertainty calibration, the ARD relevance ranking, the 150-rollout pilot,
+  and the figure `stage1_surrogate.png`. It was internal testing on too little data, and
+  predicting a settled outcome from throw parameters is not a realistic setting. The code
+  (`surrogate/fit_surrogate.py`) and the analysis in this file stay; the public write-up does
+  not mention them. The `theta -> a(t)` baseline inside `fit_dynamics.py` belongs to the same
+  family and is likewise omitted, so run it with `--skip-direct` for anything public.
+- **`BackwardEulerPicardKernel`.** It never worked well. The code remains; the README describes
+  semi-implicit Euler only.
 
 ## Current direction (as of 2026-08-25)
 
@@ -246,7 +272,8 @@ Nothing here suggests a nonlinear encoder is needed: the linear basis reaches 0.
 0.168 floor, so the subspace is nearly adequate and the autoencoder escalation stays unnecessary.
 
 **Stage 2 -- latent dynamics, `(a(t), theta_material) -> a(t+Delta)` rolled out autoregressively**
-(`surrogate/fit_dynamics.py`, figure `assets/screenshots/stage2_dynamics_v2.png`). Final
+(`surrogate/fit_dynamics.py`, public figures `assets/screenshots/rollout_error.png` and
+`rollout_fields.png` via `surrogate/plot_rollout.py`). Final
 configuration: `dataset_dyn2` (1536 rollouts x 10 checkpoints, `Delta = 0.10` s), mass rank 96 +
 momentum rank 24 per axis (latent 168, input 171), 900 training transitions, isotropic Matern.
 
@@ -287,6 +314,16 @@ must cover -- which is why the theta narrowing was the effective lever, not the 
 
 **Cost, measured:** 21 min to generate 1536 rollouts; 561 s to fit 168 GPs at n=900; ~9.4 min for
 basis + fit + evaluation.
+
+**Cost of a model step versus the solver, measured 2026-08-27, and the honest verdict: the model
+is NOT yet the faster of the two.** One autoregressive step advances 0.10 s of simulated time and
+costs **42 ms** for a single trajectory, or **10.5 ms** per trajectory in a batch of 120 (168 GPs,
+900 training points, 171 inputs). The solver covers the same 0.10 s for the 3375-grain training
+configuration (`dt=1e-4`, so 1000 steps) in **73 ms**. So the speedup is 1.7x unbatched and 7x
+batched, which is not a headline. State it that way, and state the reason it may still be the
+right trade: the model's cost is independent of grain count and timestep, while the solver's grows
+with both, so the comparison moves toward the model exactly as the simulation gets harder. Do not
+quote a speedup figure without the problem size attached.
 
 **Two honest caveats.** The accuracy was bought with generality: the theta box is ~40% narrower per
 axis, i.e. ~7% of the original volume in 7 dimensions, so 0.174 must never be quoted without stating
@@ -787,8 +824,18 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
   imagination-vs-truth figure.
 - `surrogate/fit_dynamics.py` — Stage 2: the latent dynamics model
   `(a(t), theta_material) -> a(t+Delta)`, rolled out autoregressively, against three baselines.
-- `surrogate/plot_chaos.py` — the predictability figure (per-grain divergence vs field divergence,
-  with the surrogate error and the measured floor marked).
+- `surrogate/plot_chaos.py` — the predictability figure (per-grain divergence vs field
+  divergence). It deliberately draws NO model error: the comparison against the realization
+  scatter belongs with the model, in `plot_rollout.py`. The surrogate/truncation/floor lines that
+  used to be annotated here were removed on 2026-08-27.
+- `surrogate/plot_rollout.py` — both public figures for the dynamics model, from the artifacts
+  `fit_dynamics.py --save` writes, so neither needs a refit (a refit is ~10 min; rolling the
+  fitted step maps forward is ~25 s). `rollout_error.png` is error vs horizon on a LOG axis (the
+  persistence baseline is 10x the model, and a linear axis flattens the three curves that matter),
+  and `rollout_fields.png` decodes the rollout back to the mass field for the median and worst
+  held-out rollout beside the simulation. The second figure is the strongest artifact the project
+  has: at t=1.0 s the median rollout is visually indistinguishable from the simulation, and the
+  worst predicts a compact pile where the simulation made a broader ring.
 - `surrogate/pod_study.py` — per-channel POD/SVD study: spectrum, energy captured, held-out
   reconstruction error vs rank, sample complexity (error vs number of training snapshots), and the
   per-checkpoint breakdown that revealed the momentum-decay effect. `--per-checkpoint` is the flag
@@ -885,7 +932,8 @@ would silently run something else.
 drop-a-cube-from-a-height scene produced a flat pancake in both the frictional and frictionless
 cases, so the friction contrast was invisible. A column of aspect ratio ~4 released from rest is the
 standard laboratory configuration (Lube et al. 2004, Lajeunesse et al. 2004), it collapses
-dramatically on screen, and the friction difference shows up as runout distance, which is a
+dramatically on screen, and the friction difference shows up as the distance the front travels,
+which is a
 *measurable* quantity rather than an impression. Measured at t = 2.4 s with
 `scripts/measure_deposit.cjs`, median radial extent 0.550 m at mu=0.5 against 0.872 m at mu=0, and
 median height above the floor 0.042 m against 0.026 m.
@@ -894,10 +942,10 @@ median height above the floor 0.042 m against 0.026 m.
 rolling resistance the angle of repose is ~15 deg, so 32,500 grains of radius 0.01 m spread to a
 natural heap radius of ~0.93 m and a height of ~0.25 m in a 2 m box, which reads as flat. Raising
 `friction` to 2.0 was tried and barely moved it (median radial extent 0.72 m against 0.80 m):
-free rolling, not sliding friction, is the limiter. The runout comparison is the honest way to show
+free rolling, not sliding friction, is the limiter. The front-radius comparison is the honest way to show
 the effect.
 
-**Runout against the laboratory correlation (measured 2026-08-27).** Lube et al. give
+**Front radius against the laboratory correlation (measured 2026-08-27).** Lube et al. give
 `R_inf/R_0 = 1 + 1.8 a^(1/2)` for axisymmetric columns with `a > 2`. `demos/sand.yaml` is 1.05 m
 tall on a 0.505 m square footprint, so `a` is 3.69 (equal-area equivalent radius) or 4.16 (half-side
 radius), predicting 1.27 m or 1.18 m. Re-run in a domain widened to [-2, 2] in x and y (so the front

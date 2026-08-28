@@ -132,6 +132,7 @@ def main() -> int:
                              "'all' = every checkpoint, the ensemble a dynamics model sees")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--plot", default="surrogate/pod_spectrum.png")
+    parser.add_argument("--dpi", type=int, default=200)
     parser.add_argument("--per-checkpoint", action="store_true",
                         help="also report held-out error per checkpoint, which is what "
                              "reveals that momentum is only learnable while the material moves")
@@ -186,7 +187,10 @@ def main() -> int:
         for result in results:
             s = result["singular_values"]
             energy = np.cumsum(s ** 2) / np.sum(s ** 2)
-            axes[0].semilogy(s / s[0], label=result["name"])
+            # Drop the final value: the snapshot matrix is mean-centered, so its rank is at
+            # most one less than the number of snapshots and the last singular value is
+            # numerically zero. Plotting it puts a spurious cliff at the right edge.
+            axes[0].semilogy((s / s[0])[:-1], label=result["name"])
             axes[1].plot(np.arange(1, len(energy) + 1), energy, label=result["name"])
         axes[0].set(xlabel="mode index", ylabel="singular value / first",
                     title="POD spectrum (per channel)")
@@ -211,7 +215,7 @@ def main() -> int:
         fig.suptitle(f"POD study -- {args.snapshots} snapshots, one basis per channel")
         fig.tight_layout()
         os.makedirs(os.path.dirname(args.plot) or ".", exist_ok=True)
-        fig.savefig(args.plot, dpi=110)
+        fig.savefig(args.plot, dpi=args.dpi)
         print(f"\nwrote {args.plot}")
     except ImportError:
         print("\n(matplotlib unavailable; skipping plot)")

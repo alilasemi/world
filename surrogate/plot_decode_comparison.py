@@ -42,6 +42,7 @@ def main() -> int:
     parser.add_argument("--energy-poisson", default="/tmp/energy_poisson.csv")
     parser.add_argument("--energy-uniform", default="/tmp/energy_uniform.csv")
     parser.add_argument("--out", default="surrogate/decoded_particles.png")
+    parser.add_argument("--dpi", type=int, default=200)
     args = parser.parse_args()
 
     import matplotlib
@@ -57,7 +58,8 @@ def main() -> int:
     # --- row 0: domain-scale top views, where the two are indistinguishable ---
     for col, (pos, label) in enumerate(((pos_u, "uniform sampler"),
                                         (pos_p, "Poisson-disk sampler"))):
-        axes[0, col].scatter(pos[:, 0], pos[:, 1], s=1.0, alpha=0.3, c="tab:blue", lw=0)
+        axes[0, col].scatter(pos[:, 0], pos[:, 1], s=3.5, alpha=0.5, lw=0,
+                             c="tab:orange" if col == 0 else "tab:blue")
         axes[0, col].set(title=f"{label}: full domain, t={t:.2f}s",
                          xlabel="x (m)", ylabel="y (m)", aspect="equal",
                          xlim=(-1, 1), ylim=(-1, 1))
@@ -114,7 +116,7 @@ def main() -> int:
                  "state is re-initializable", fontsize=13)
     fig.tight_layout()
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    fig.savefig(args.out, dpi=110)
+    fig.savefig(args.out, dpi=args.dpi)
     print(f"wrote {args.out}")
     print(f"  uniform  overlap {100 * (nn_u < 1).mean():.1f}%, median gap {np.median(nn_u):.3f} d")
     print(f"  poisson  overlap {100 * (nn_p < 1).mean():.1f}%, median gap {np.median(nn_p):.3f} d")
