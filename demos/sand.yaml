@@ -1,0 +1,107 @@
+# Frictional release: the same 32,768-grain block dropped with mu = 0.5, a value
+# representative of dry sand, which gives the material a yield stress and lets it
+# hold a slope. Used to record assets/gifs/sand.gif; the ONLY difference from
+# demos/fluid.yaml is physics.friction. Capture with:
+#
+#   ./build/bin/world demos/sand.yaml
+#   (cd client && node index.js local)
+#   node scripts/capture_gif.cjs assets/gifs/sand.gif 70
+#
+simulation:
+  dt: 0.0004
+  # Cells are sized to roughly one particle diameter (2*radius = 0.02 across a
+  # 2.0-wide domain -> 100 cells/axis), which is what keeps particles_per_cell
+  # small. See CLAUDE.md on why inflating particles_per_cell costs throughput.
+  collision_grid_size_x: 100
+  collision_grid_size_y: 100
+  collision_grid_size_z: 100
+  particles_per_cell: 8
+  threads_per_block: 256
+
+  # Coarse grid the density/momentum latent is deposited onto, sized
+  # INDEPENDENTLY of the collision grid above: the collision grid needs ~one
+  # particle diameter per cell for the neighbor search to stay cheap, while the
+  # latent wants to be coarse enough that each node averages many grains and a
+  # learned model has few outputs. 32^3 nodes x 4 channels (mass + momentum
+  # per axis) = 131072 floats = 512 KB.
+  density_grid_size_x: 32
+  density_grid_size_y: 32
+  density_grid_size_z: 32
+
+# Simulation domain bounds. Particles are mapped into grid cells across this
+# range; it need not be the historical [-1, 1] cube.
+domain:
+  x_min: -1.0
+  x_max:  1.0
+  y_min: -1.0
+  y_max:  1.0
+  z_min: -1.0
+  z_max:  1.0
+
+physics:
+  gravity: 9.81
+  particle_radius: 0.01
+  max_force: 2000.0
+  # z is up: floor/ceiling are the z walls, the other four are the sides.
+  floor_z:    -1.0
+  ceiling_z:   1.0
+  wall_x_min: -1.0
+  wall_x_max:  1.0
+  wall_y_min: -1.0
+  wall_y_max:  1.0
+  # Target coefficient of restitution for the linear spring-dashpot contact
+  # model (0 = fully inelastic/critically damped, 1 = perfectly elastic/no
+  # damping). See the restitution_to_damping() comment in
+  # compute_rhs_kernel.cu for the derivation and literature references.
+  restitution: 0.3
+  # Coulomb friction coefficient for the tangential contact force. This is what
+  # gives the material a yield stress and therefore an angle of repose; at 0 a
+  # released pile has no static strength and spreads until flat. ~0.5 is dry sand.
+  friction: 0.5
+
+materials:
+  # Per-material masses, indexed by material id: 0 = wall, 1 = sand.
+  masses: [0.0, 0.8]
+
+initialization:
+  type: cube                 # "cube", "two_particles" or "single_particle"
+  x0: -0.242
+  y0: -0.242
+  z0: -0.99
+  # A granular column resting on the floor: 25 x 25 x 52 grains (32,500 in total)
+  # occupying a footprint of 0.48 m and standing 1.03 m tall, so the aspect ratio
+  # of height to column radius is 4.1. A column of this aspect ratio cannot support
+  # itself and collapses on release, which is the standard laboratory configuration
+  # for granular flow (Lube et al. 2004, Lajeunesse et al. 2004). Grain spacing is
+  # derived from physics.particle_radius, and the lowest layer of centres sits one
+  # radius above the floor so the initial packing carries no overlap.
+  # jitter breaks the exact symmetry of the lattice, without which every sphere sits
+  # directly atop another with a vertical contact normal and the block is
+  # self-supporting. See SimConfig::init_jitter.
+  jitter: 0.25
+  seed: 12345
+  cube_length_x: 0.50
+  cube_length_y: 0.50
+  cube_length_z: 1.05
+  particle_material: 1
+  # two_particles: offset between the two particles, along z.
+  two_particle_separation: 0.1
+
+rendering:
+  # Triangles per particle polygon, sent to the client at initialize. The render
+  # radius is not a separate field -- it reuses physics.particle_radius.
+  num_triangles: 6
+
+drivers:
+  port: 8081
+  steps_per_frame: 100
+  profiling_outer_iters: 10
+  profiling_steps_per_iter: 10
+  kernel_timing: true
+
+# build/bin/stability_and_accuracy sweep parameters live in stability/config.yaml,
+# not here -- this file is for world/profile.
+
+time_integration:
+  solver: semi_implicit_euler    # "semi_implicit_euler" or "backward_euler_picard"
+  picard_iterations: 3           # number of Picard iterations (only used by backward_euler_picard)

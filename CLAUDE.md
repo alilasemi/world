@@ -22,7 +22,7 @@ mechanically enforces the rules below. They are the only guardrail. Follow them 
 explicitly asks otherwise *in the moment* — a standing exception is never assumed.
 
 - **Stay inside the repository.** Do not delete, move, or modify files outside
-  `~/real-time-particles`. Other repositories in `$HOME` are off limits. Scratch files go in the repo
+  `~/world`. Other repositories in `$HOME` are off limits. Scratch files go in the repo
   (gitignored) or `$TMPDIR` — never in a sibling project.
 - **Never modify a git remote.** No `git push` (including `--force`), no creating/deleting remote
   branches or tags, no PR or release creation, no `git remote set-url`. Local commits are fine when
@@ -48,13 +48,53 @@ explicitly asks otherwise *in the moment* — a standing exception is never assu
 Do not add a `Co-Authored-By: Claude` trailer or any other Claude Code attribution to commits in this
 repo. Commit only when asked.
 
+## Naming, and the public README
+
+**The project is named `world` (repository) and "World" (official name), as of 2026-08-27.** It was
+previously called `real-time-particles`, and that string should not appear anywhere else. Three
+places were easy to miss during the rename and are recorded here so they are not reintroduced: the
+`~/world` path in the "Constraints" section above, the `world/.claude/settings.local.json`
+reference under "Sandbox and GPU access", and `client/package.json`, which still carried the name
+and description of the Google Cloud Node sample it was scaffolded from. The GitHub remote is
+`git@github.com:alilasemi/world.git`.
+
+Two consequences outside the repo. The positioning document in `~/job-search` keeps its original
+filename, which still carries the former name; that file is outside this repo and was left alone.
+And the Claude Code project directory changed with the working directory, so the transcripts under
+`~/.claude/projects/` were merged forward into `-home-ali-lasemi-world` (session UUIDs do not
+collide, so a plain copy was sufficient). The directory named after the old path was left in place
+rather than deleted, and can be removed once nothing is needed from it.
+
+**`README.md` is the public artifact and is written to a specific set of constraints. Keep them
+when editing it.** The author's voice is the one in his IJMF 2026 paper
+(`~/jcp-2026/context/ijmf-2025/main.tex`), and `~/jcp-2026/CLAUDE.md` holds the explicit rule list.
+The ones that bite most often:
+
+- **Plain hyphens only.** No em dash, no en dash, no `--` outside command-line flags.
+- **No acronym that is not in the nomenclature of `surrogate/formulation.tex`** (ARD, FOM, GP, POD,
+  QMC, RMS, SVD). In particular *do not write DEM*: say "dynamics simulation", "particle dynamics"
+  or "contact dynamics". Spell out cloud-in-cell and material point method. Product and technology
+  names (CUDA, GPU, WebGL2, YAML) are not covered by this.
+- **No negative parallelism** ("not just X but Y", "it is not X, it is Y"). Watch for the
+  substitutes too: an editing pass that mechanically replaced "rather than" with "and not" simply
+  moved the tic. Vary the construction.
+- **No bold for emphasis in body prose**, no contractions, no rhetorical questions.
+- The banned-vocabulary list in `~/jcp-2026/CLAUDE.md` applies verbatim, including **genuinely** and
+  **load-bearing**.
+- **Every claim about the literature carries a numbered reference**, and every quantitative claim
+  carries a measurement or a figure. The reference list at the bottom is checked: a script pass
+  confirms that every `[[n]]` is defined and every definition is cited.
+- **No strikethrough, no dev-log residue, no roadmap of completed items.** Status belongs in this
+  file; the README states what is true now.
+
 ## Current direction (as of 2026-08-25)
 
 The project is being repositioned from "a real-time fluid simulation and rendering engine" to **a
 GPU-native, real-time, interactive physics environment for embodied AI, plus a measurement of what is
 actually predictable inside it**. The strategy documents driving this live *outside* this repo in
-`~/job-search` (read-only reference: `real_time_particles_positioning.md` §3.0 is the live plan, and
-its `CLAUDE.md` holds the decision log). Read them before proposing direction changes.
+`~/job-search` (read-only reference: the positioning document there, whose filename still carries the
+project's former name, is the live plan in its §3.0, and its `CLAUDE.md` holds the decision log). Read
+them before proposing direction changes.
 
 Decisions already argued through — do not re-litigate:
 - **No reinforcement learning.** A prior PPO stack was removed (recoverable from git history at
@@ -405,9 +445,10 @@ Three things learned in the process, all worth not rediscovering:
    unopposed; *with* friction those get suppressed and the lattice survives a 3 m/s impact
    completely intact — which looks like a bug and is not one. `initialization.jitter` (fraction of
    radius, deterministic via `initialization.seed`) breaks the symmetry and yields a real disordered
-   packing. Compare `assets/screenshots/flat_without_friction.png` (frictionless: a flat carpet
-   covering the whole floor) with `heap_with_friction.png` (mu=0.5 + jitter: a domed heap with a
-   slope). The same knob supplies the epsilon-perturbed ICs the predictability measurement needs.
+   packing. Compare `assets/gifs/frictionless_collapse.gif` (mu=0: the material spreads until it
+   reaches the side walls) with `frictional_collapse.gif` (mu=0.5 + jitter: the front arrests at a
+   median radius of 0.55 m against 0.87 m). The same knob supplies the epsilon-perturbed ICs the
+   predictability measurement needs.
 
 3. **`compute_total_energy()` now includes contact elastic energy — and that fixed a false alarm.**
    It originally summed only kinetic + gravitational potential, so a rising trace looked like
@@ -677,8 +718,9 @@ compute-sanitizer --tool initcheck ./build/bin/profile  # reads of uninitialized
 
 Hardware/toolchain as of 2026-08-25: CUDA 13.1 (`nvcc` at `/usr/local/cuda`), NVIDIA driver
 580.173.02, GeForce RTX 2080 (TU104, `sm_75`, 8 GB). Known-good 3D baseline with the checked-in
-`config.yaml` (32768 grains + 1 sled): `profile` prints ~35/13/1.0/0.23 ms for
-grid/RHS/step/unpack over 100 steps, `make test` passes 6/6, and all three sanitizer tools report
+`config.yaml` (32768 grains + 1 sled): `profile` prints ~35.8/14.6/1.03/0.19 ms for
+grid/RHS/step/unpack over 100 steps (re-measured 2026-08-27, three runs, spread under 2%, i.e.
+0.514 ms/step and 1.95x real time), `make test` passes 11/11, and all three sanitizer tools report
 zero findings. (The pre-3D 2D baseline, for comparison, was ~53/16/1.6/0.33 ms at 100k grains.)
 
 **Real-time operating point.** Real time is the binding constraint (see "Current direction"), so the
@@ -701,7 +743,7 @@ attack before chasing bigger particle counts.
 ### Sandbox and GPU access
 
 **Claude Code's Bash sandbox must be disabled in this repo or the GPU is invisible.**
-`real-time-particles/.claude/settings.local.json` carries `{"sandbox": {"enabled": false}}`, while
+`world/.claude/settings.local.json` carries `{"sandbox": {"enabled": false}}`, while
 `~/.claude/settings.json` keeps `sandbox.enabled: true` so every *other* project stays sandboxed.
 
 Symptom when this is wrong: `cudaMalloc ... failed: no CUDA-capable device is detected`, and
@@ -768,26 +810,101 @@ Deposited mass per checkpoint should equal `grains * grain_mass` to ~1e-7 relati
 that single check validates the binary layout (a wrong stride scrambles it) and the CIC deposit's mass
 conservation at the same time.
 
-## Client/browser verification (headless)
+## Client/browser verification, and recording the README figures (headless)
 
 This dev box can drive the actual WebGL2 client headlessly — use this to verify client-side
 changes (the `client/world.js` render path, the WS protocol) end-to-end instead of only checking the
-wire bytes. **Playwright is installed globally** (`playwright --version`, currently 1.61.x; require
-it from the global `node_modules`, it is *not* a `client/` dependency) and **system Chrome** is on
-PATH (`/usr/bin/google-chrome`). WebGL works headless via SwiftShader — launch Chrome with
+wire bytes, and to record the animations and stills the README uses. **Playwright is installed
+globally** (`playwright --version`, currently 1.61.x) and **system Chrome** is on PATH
+(`/usr/bin/google-chrome`). WebGL works headless via SwiftShader — launch Chrome with
 `channel: 'chrome'` and args `--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`.
-A Playwright script can then capture `console`/`pageerror` events and a canvas screenshot, which
-renders the particle cube + red grid overlay + HUD (a useful visual smoke test).
+
+Three checked-in Node scripts do this and are the thing to reuse rather than re-deriving:
+
+- **`scripts/capture_gif.cjs <out.gif> [frames] [fps]`** — records an animated GIF of the live
+  client. `CAPTURE_FRAME_DIR` keeps the full-resolution PNGs so a clip can be re-encoded or
+  trimmed without re-simulating; `CAPTURE_SCALE`, `CAPTURE_CROP`, `CAPTURE_WIDTH`/`HEIGHT`
+  override the encode.
+- **`scripts/capture_screenshot.cjs <out.png> [frames] [--grid]`** — one still, after a known
+  number of frames, optionally with the collision-grid overlay on.
+- **`scripts/measure_deposit.cjs [seconds]`** — speaks the binary protocol directly (no browser)
+  and reduces the final positions to percentiles of radial extent and height. This is the cheap way
+  to get a *number* out of a scene without adding a C++ driver.
+
+Four things about the capture path are decisions, not accidents, and re-deriving them costs an hour:
+
+1. **The capture must GATE the client's loop, not sample it.** `page.addInitScript` wraps
+   `WebSocket.prototype.send` and holds every outgoing `"run"` until the script releases one, so
+   exactly one step batch, one render and one screenshot happen per iteration. Without the gate the
+   client outruns the capture badly: measured, a naive "screenshot every time the HUD sim time
+   changes" loop got 4 frames spanning t=0.12 s to t=8.36 s, because the client renders far faster
+   than Playwright screenshots. With the gate, frames are spaced by exactly
+   `steps_per_frame * dt` and the recording is independent of rasterizer speed.
+2. **Use `page.screenshot`, never `locator.screenshot`.** The locator variant first waits for the
+   element to be stable across two animation frames; a software-rasterized frame of 32k impostor
+   spheres takes long enough that this times out at 30 s every time. The canvas fills the viewport,
+   so a page screenshot is equivalent.
+3. **Hide the HUD for anything published, and set checkbox state by property.** The HUD's
+   real-time ratio under SwiftShader is dominated by the rasterizer (it reports 0.31x and a WebGL
+   render of 4622 ms while the solver is at 1.3 ms), which is actively misleading in a figure. Hide
+   with `visibility: hidden`, not `display: none`, so the HUD text stays readable as the frame
+   clock. A hidden `#gridButton` cannot be clicked even with `force: true`, so set
+   `.checked = true` in `page.evaluate` instead.
+4. **Resolve Playwright from `npm root -g`.** It is a global install under nvm
+   (`~/.nvm/versions/node/*/lib/node_modules`), not `/usr/lib/node_modules`, and not a `client/`
+   dependency.
 
 Recipe: start the backend, then the static client server, then drive a browser at
 `http://localhost:8080`:
 ```
-setsid ./build/bin/world >world.log 2>&1 </dev/null &   # see gotcha below
+setsid ./build/bin/world demos/sand.yaml >world.log 2>&1 </dev/null &   # see gotcha below
 (cd client && setsid node index.js local >client.log 2>&1 </dev/null &)  # :8080, WS -> localhost:8081
-# then a Playwright .cjs that goto()'s http://localhost:8080, waits a few seconds, screenshots
+node scripts/capture_gif.cjs assets/gifs/frictional_collapse.gif 60 25
 ```
 
 **Gotcha:** launch long-running servers with `setsid ... </dev/null &` (detached from the shell's
 process group). A plain `&` puts them in the Bash tool's process group, so they get killed when that
 tool invocation's shell exits — the server appears to die "after one initialize" for no reason. The
 incidental 404 in the browser console is just a missing `favicon.ico`, not a real error.
+
+**Second gotcha, this one self-inflicted and worth remembering: `pkill -f <pattern>` in the Bash
+tool kills the tool's own shell** whenever the pattern also matches something else in the same
+compound command line (the shell's `/proc/*/cmdline` contains the whole command). It shows up as a
+bare exit code 144 with no output and nothing started. Use `pkill -x world`, or put the kill in a
+separate invocation from the launch.
+
+## The demo configurations (`demos/`)
+
+`demos/fluid.yaml` and `demos/sand.yaml` differ in exactly one value, `physics.friction`, and
+`demos/grain_detail.yaml` is a 64-grain close-up for the renderer figure. All three are full
+configs, not overlays: `SimConfig`'s member defaults are *not* the values in the repo-root
+`config.yaml` (default `dt` is 1e-4, `init_jitter` 0, `cube_length_*` 0.2), so a partial demo config
+would silently run something else.
+
+**The scene is a granular column collapse, and that choice is deliberate.** The earlier
+drop-a-cube-from-a-height scene produced a flat pancake in both the frictional and frictionless
+cases, so the friction contrast was invisible. A column of aspect ratio ~4 released from rest is the
+standard laboratory configuration (Lube et al. 2004, Lajeunesse et al. 2004), it collapses
+dramatically on screen, and the friction difference shows up as runout distance, which is a
+*measurable* quantity rather than an impression. Measured at t = 2.4 s with
+`scripts/measure_deposit.cjs`, median radial extent 0.550 m at mu=0.5 against 0.872 m at mu=0, and
+median height above the floor 0.042 m against 0.026 m.
+
+**Do not try to produce a visually striking heap; the contact model cannot make one.** With no
+rolling resistance the angle of repose is ~15 deg, so 32,500 grains of radius 0.01 m spread to a
+natural heap radius of ~0.93 m and a height of ~0.25 m in a 2 m box, which reads as flat. Raising
+`friction` to 2.0 was tried and barely moved it (median radial extent 0.72 m against 0.80 m):
+free rolling, not sliding friction, is the limiter. The runout comparison is the honest way to show
+the effect.
+
+**Runout against the laboratory correlation (measured 2026-08-27).** Lube et al. give
+`R_inf/R_0 = 1 + 1.8 a^(1/2)` for axisymmetric columns with `a > 2`. `demos/sand.yaml` is 1.05 m
+tall on a 0.505 m square footprint, so `a` is 3.69 (equal-area equivalent radius) or 4.16 (half-side
+radius), predicting 1.27 m or 1.18 m. Re-run in a domain widened to [-2, 2] in x and y (so the front
+is set by the material, not the walls) the measured front is 1.03 m, i.e. 13-19% short. The wide
+domain changed the answer by under 1% against the [-1, 1] demo domain (max 1.026 m vs 1.092 m,
+p99 0.933 vs 0.925), so the *frictional* demo is not wall-limited; the frictionless one is
+(p99 1.31 m with walls at 1.0 m and corners at 1.41 m), and the README says so. Two plausible
+reasons for the 13-19% deficit, neither chased down: only 25 grains across the column, far from the
+continuum limit of the experiments, and no rolling resistance. Report it as a scaling check, never
+as a calibration.
