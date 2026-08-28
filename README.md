@@ -168,6 +168,11 @@ coarse mass fields of two ensemble members differ by 0.086 and their centers of 
 a grid node. The distance between the two panels is the whole argument for predicting a coarse
 field instead of a trajectory: chaos destroys the estimator and leaves the quantity intact.
 
+The same ensemble supplies the number a model has to be judged against. At a perturbation of a
+quarter of a grain radius the members are distinct realizations of one macroscopic state, and
+the root mean square deviation of a realization about the ensemble mean is 0.154 for the
+parameter box and horizon used in Section [5](#5-the-world-model).
+
 ## 5. The world model
 
 The model predicts one state of the material from the previous one, works in a compact
@@ -176,15 +181,15 @@ observation of the initial state. Section [4](#4-what-is-predictable) is why it 
 way: grain coordinates are unknowable past 0.62 s, and the coarse field is not.
 
 The state the model works in is a coarse field with four channels, mass density and the three
-components of momentum density, deposited from the particles onto a grid of 32 by 32 by 32 nodes
-by the trilinear, or cloud-in-cell, weights [[17]](#ref17) that the material point method uses
-for its particle to grid transfer [[18]](#ref18). The momentum channels are not optional: two
-piles of identical shape and different velocity fields evolve differently, so a mass field alone
-is not a Markov state. This method of transferring the particles to the grid is continuous in particle position, unlike nearest-node
+components of momentum density, deposited from the particles onto a grid of 32 by 32 by 16
+nodes, coarser along z because the outcome is a thin layer, by the trilinear, or cloud-in-cell,
+weights [[17]](#ref17) that the material point method uses for its particle to grid transfer
+[[18]](#ref18). The momentum channels are not optional: two piles of identical shape and
+different velocity fields evolve differently, so a mass field alone is not a Markov state. This method of transferring the particles to the grid is continuous in particle position, unlike nearest-node
 binning, and the discontinuity that binning would introduce at every cell crossing would
 enter the regression target as noise. Out-of-range indices are clamped, so the eight weights
-always sum to one and total mass is conserved exactly. Encoding the full 32,768-grain state
-costs 0.03 ms.
+always sum to one and total mass is conserved exactly. Encoding each
+32,768-grain state onto the 32 by 32 by 32 latent of the interactive configuration costs .03 ms.
 
 That field is reduced by a proper orthogonal decomposition (POD), computed by
 singular value decomposition (SVD) of the centered snapshot matrix, with one
@@ -345,13 +350,14 @@ superlinear: 4.6 times the grains, from 19,700 to 91,000, costs 12.6 times the t
 neighbor array overruns the 4 MB last-level cache of this GPU. The bottleneck is memory traffic,
 with arithmetic to spare, which is where the next optimization belongs.
 
-It is worth being transparent that the world model is not yet faster than the simulation. One
+It is worth being transparent about how modest the speedup over the solver is. One
 autoregressive step advances 0.10 s of simulated time and costs 42 ms for a single trajectory,
 or 10.5 ms per trajectory in a batch of 120, against 73 ms for the solver to cover the same
-interval for the 3375-grain configuration the model was trained on. Exact GP inference over 900
-training points and 168 outputs is the cost. What the model does have is a cost independent of
-both grain count and timestep, while the solver's grows with each, so the comparison moves in
-the model's favor exactly as the simulation gets harder.
+interval for the 3375-grain configuration the model was trained on. That is 1.7x unbatched and
+7.0x batched, where a learned surrogate is usually expected to buy orders of magnitude. This cost is
+due to the exact GP inference over 900 training points and 168 outputs. One
+advantage however is that the cost is independent of both grain count and timestep, while the solver cost grows
+with each, so the comparison moves in the model's favor as the simulation gets harder.
 
 ## 7. Verification and validation
 
