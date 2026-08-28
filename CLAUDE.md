@@ -48,6 +48,13 @@ explicitly asks otherwise *in the moment* — a standing exception is never assu
 Do not add a `Co-Authored-By: Claude` trailer or any other Claude Code attribution to commits in this
 repo. Commit only when asked.
 
+**Never `git add -A` in this repository.** The generated training sets are large and are gitignored by
+directory (`dataset_heavy*/`, `decoded_heavy*/`, `dataset_dyn2/`, `dataset_dynamics/`, `decoded/`,
+`decoded_uniform/`), but a newly named output directory will not be covered until a line is added, and
+`dataset_heavy64/` alone is 16 GB. Stage explicitly, and check `git status --short` for `??` entries
+before committing. Figures the README displays are tracked; intermediate figures it does not reference
+are left on disk untracked.
+
 ## Naming, and the public README
 
 **The project is named `world` (repository) and "World" (official name), as of 2026-08-27.** It was
@@ -99,6 +106,11 @@ The ones that bite most often:
   repository holds a world model *and* the simulation it was trained on. The opening paragraph
   must begin with the world model, name it in the first line, and reach chaos only at the end.
   Section titles carry the split: "The solver" and "The world model".
+
+**The README reports the 32,000-grain study at a 64x64x16 latent, not the first study.** See "The
+32,000-grain study" below for the numbers and for the conclusions that changed. Anything quoting
+0.174, 1.13x, a 0.154 floor, 3,375 grains, a 0.10 s interval, or momentum decaying to numerical creep
+is from the superseded study and does not belong in the README.
 
 **Two things are deliberately absent from the README and should stay absent.**
 
@@ -249,9 +261,16 @@ difference between realizations is 0.245, but that is **not** the floor. If `s =
 independent zero-mean `n`, then `||s_a - s_b|| ~ sqrt(2)||n||` while a model predicting `mu` incurs
 only `||n||`. Measured directly from `chaos/final_fields.bin` (16 realizations), the RMS deviation
 **about the ensemble mean** is **0.168**, and the ratio to the pairwise number is 1.46 against
-`sqrt(2) = 1.414` — the relation is confirmed empirically, so pairwise/sqrt(2) is a valid proxy when
-fields aren't dumped. Comparing the surrogate to the pairwise 0.245 instead would have wrongly
-suggested it was nearly optimal.
+`sqrt(2) = 1.414`, so pairwise/sqrt(2) is a valid proxy when fields aren't dumped. Comparing the
+surrogate to the pairwise 0.245 instead would have wrongly suggested it was nearly optimal.
+
+**CORRECTION (2026-08-28): that 1.46 is NOT empirical confirmation of anything, it is arithmetic.**
+An earlier version of this note claimed the sqrt(2) relation was "confirmed empirically" because the
+measured ratio came out at 1.46 rather than 1.414. For `E` independent zero-mean deviations, with the
+about-mean RMS taken with divisor `E`, the ratio is exactly `sqrt(2E/(E-1))`, which for `E = 16` is
+**1.4606**. The gap from 1.4142 is the finite-ensemble factor `sqrt(16/15) = 1.0328` and nothing
+more. The tell was that the number came out identical to four digits in three unrelated
+configurations. The relation still justifies the proxy; it just is not evidence about the physics.
 
 **Verdict:**
 
@@ -521,6 +540,160 @@ and `c_wall * |vz| = 0.657 N` was exactly the shortfall between the normal force
 waste precision. Fixing it properly means double-precision positions (or accumulating positions
 relative to a local origin); neither is done, so treat sub-mm-per-second dynamics near the domain
 walls as unresolved.
+
+## The 32,000-grain study (2026-08-28), which is what the README now reports
+
+**The POD study, the Stage 1 and Stage 2 results, the predictability measurement and the decoding
+notes recorded under "Current direction" above all belong to the FIRST study: 3,375 grains at
+`dt=1e-4`, latent 32x32x16 over a 2 m domain, `Delta = 0.10` s, horizon 1.0 s. They are kept, they
+are still internally valid, and they are no longer what the README describes.** (The solver facts in
+that section, the contact model, the energy diagnostic, the float32 position stall, are not
+study-specific and still apply.) The reason for a second study is that the
+solver's headline figure was 32,768 grains while the model was trained on 3,375, so the README read
+as though one system was being described when there were two. The new configuration is
+`dataset/blob_heavy64.yaml`: 32,000 grains (40x40x20) at `dt=1e-3`, latent 64x64x16 over a 20 m
+domain, `Delta = 0.20` s, horizon 2.0 s. At 0.617 ms/step it runs at **1.62x real time**, so the
+training system and the interactive system are now the same system.
+
+### The identity that governs the timestep, and why raising the mass cannot help
+
+This is the single most useful thing to carry forward. Peak interpenetration on impact obeys
+
+    overlap / radius  =  v * S * dt / (2 * pi * radius)
+
+with `S` the number of steps per contact period. At fixed impact speed `v` and fixed `dt`, overlap is
+**proportional** to `S`, because mass enters the contact period and the overlap identically. So
+heavier grains buy a longer contact period and pay for it one-for-one in interpenetration. At
+`radius = 0.01`, demanding `S = 20` at `dt = 1e-3` gives an overlap of **1.4 radii**, i.e. grains
+passing through one another. **The radius is the only lever.** For calibration, the checked-in
+interactive config runs at `S = 8.9` and an overlap of 0.44 radii, and the first study ran at
+`S = 28` and 0.18 radii.
+
+Probe record, kept in `probe/*.yaml` (all 32,768 grains, `dt=1e-3`, all stable with monotone energy
+and no grid overflow):
+
+| probe | radius | max_force | overlap | deposit depth | wall clearance |
+|---|---|---|---|---|---|
+| p1 | 0.03 | 12 kN | 0.36r | 1.85 dia | tight |
+| p2 | 0.05 | 50 kN | 0.28r | 2.18 dia | 1.73x |
+| p3 | 0.07 | 100 kN | 0.24r | 2.51 dia | 1.72x |
+| p5 (chosen) | 0.05 | 50 kN | 0.20r | **2.96 dia** | **2.08x** |
+
+In grain-diameter units p1 to p3 behaved identically, which confirms the scaling and means the choice
+was free. p5 differs from p2 by flattening the blob from a 32^3 cube to 40x40x20: a cube is 3.2 m
+tall, which forces a tall z domain and leaves the 16 latent z-nodes spanning 2.5 diameters each.
+`c_*.yaml` are worst-corner probes (fast diagonal throw, downward, heaviest grain); the worst cleared
+the side walls by 1.37x with no grain within two diameters of one.
+
+Two further design points. The **grain mass range is set by the timestep, not by taste**: `k = 1e6`
+N/m, so 20.3 kg gives exactly 20 steps per contact and 45.5 kg gives 30 (`--preset heavy` in
+`make_design.py`, which leaves the original preset untouched). And the **throw velocities are ~10x
+the first study's on purpose**: there the throw was +/-0.7 m/s against a 4 m/s impact, so the ACTION
+was a small perturbation on a splat; here it moves the deposit centroid by ~10 grain diameters.
+
+### The floor depends on the LATENT RESOLUTION too, not just theta and horizon
+
+Measured with 16-member ensembles at fixed theta (`chaos/ensemble_heavy64.yaml`, and the same with
+`density_grid_size_x/y` varied):
+
+| latent nodes | node spacing | floor | field predictability horizon |
+|---|---|---|---|
+| 32 | 6.45 dia | 0.0198 | 0.96 s |
+| 48 | 4.26 dia | 0.0274 | 0.88 s |
+| 64 | 3.17 dia | **0.0345** | 0.84 s |
+| 96 | 2.11 dia | 0.0478 | 0.82 s |
+
+A coarser grid averages more grains per node, so realization-to-realization fluctuations average
+away and the floor drops. **A low floor is therefore not automatically a sign that the physics is
+reproducible; it can be a sign that the latent is discarding information.** 64 nodes was chosen
+because it restores the first study's 3.17 diameters per node and makes the comparison like for like.
+
+The eightfold floor difference between the studies (0.156 against 0.0199 at 32 nodes) factors
+cleanly, and the factorisation is worth keeping: the ratio of per-grain scramble to node spacing is
+2.70 in the first study against 0.33 here, a factor of 8.2, against a measured floor ratio of 7.8.
+That splits into **4.1x from physics** (grains scramble 8.72 diameters there against 2.14 here,
+because the first study dropped the blob 32 to 50 diameters and this one drops it 5) and **2.0x from
+the grid**. Refining the grid recovers only the second factor.
+
+*Do not try to predict the floor absolutely from `min(1, scramble/spacing)/sqrt(grains per node)`.*
+That sketch overshoots both studies (0.049 against 0.020, and 0.55 against 0.156) because an
+occupancy threshold of 1% of peak counts the diffuse tail and undercounts grains per node. The ratio
+argument holds; the absolute formula does not.
+
+### Results, and the conclusions that changed
+
+At t = 2.0 s, nine autoregressive steps, 120 held-out rollouts, rank 96 mass + 24 per momentum axis
+(`surrogate/stage2_heavy64.joblib`, figures `*_heavy64.png`):
+
+| quantity | 64 nodes | 32 nodes | first study (t = 1.0 s) |
+|---|---|---|---|
+| irreducible floor | **0.0345** | 0.0199 | 0.156 |
+| autoregressive rollout | **0.153** | 0.138 | 0.174 |
+| rollout / floor | **4.43x** | 6.93x | 1.13x |
+| truncation | 0.0576 | 0.0346 | 0.108 |
+| truncation / floor | **1.67x** | 1.74x | 0.70x |
+| one-step regression | 0.0020 | 0.0034 | 0.001 |
+| compounding | 0.0930 | 0.0999 | 0.065 |
+| persistence | 1.132 | 1.115 | 1.531 |
+| mass variance retained at rank 96 | 0.9985 | 0.9991 | 0.9974 |
+
+- **The 1.13x headline does not survive, and that is the honest outcome.** It was flattered by a floor
+  inflated by a small, noisy assembly. At a resolved latent the model is 4.4x the floor, so there is
+  real headroom.
+- **Truncation/floor is invariant to resolution** (1.74x against 1.67x): quadrupling the nodes raised
+  truncation and the floor by nearly the same factor. So **rank, not grid size, limits the
+  representation.** Raising the rank is the fix.
+- **Compounding is invariant in absolute terms** (0.100 against 0.093, and identical at every horizon)
+  because it accumulates latent-space step error and the latent dimension is unchanged. It is 61
+  percent of the error, so a **multi-step objective is the priority**, and the exact GP cannot express
+  one.
+- **The one-step regressor is essentially exact**, 0.002 of 0.153. More training data would do nothing.
+- **The rollout error rises monotonically** instead of peaking at impact and falling. Only the ONE-STEP
+  error peaks (0.105 at t = 0.4 s down to 0.060). The old "impact is the hardest part" line is a
+  statement about the one-step map only; asserting it of the rollout is wrong here.
+- **Momentum does not decay to numerical creep.** The ratio to the mass scale falls to 0.151, not
+  0.018, so "the settled state is density alone" is false for this configuration. Note the convention:
+  `pod_study.py` reports `RMS |rho*u| / RMS |rho|` using the momentum vector MAGNITUDE, which is
+  `sqrt(3)` larger than pooling the three components separately. Quoting the two conventions side by
+  side in one paragraph is a mistake already made once.
+- **Linear compressibility is confirmed more strongly:** quadrupling the node count cost 0.0006 of
+  retained mass variance at rank 96. The autoencoder escalation stays unnecessary.
+- **momentum_z of the SETTLED field is high-rank**: 87 modes for 90% of variance against 12 for x and
+  y. Not a contradiction with the fit retaining 0.988 at rank 24, because the fit's basis spans all
+  ten checkpoints and is dominated by the smooth flight phase, while `--snapshots final` sees only
+  slow settling.
+
+### Decoding at this grain count
+
+Both samplers redone on the 64-node model (`decoded_heavy64_*`, figure `decoded_particles_heavy64.png`).
+The trade is the same as before but far sharper, and one new failure mode appears:
+
+| at t = 2.0 s | uniform | minimum separation |
+|---|---|---|
+| grains closer than one diameter | 94% | **0%** |
+| median nearest-neighbour distance | 0.56 dia | 1.03 dia |
+| energy on restart | 3.59e7, loses 86% in 0.1 s | 4.75e6, loses 1.9% |
+| centroid error | **0.026 m** | 0.203 m |
+| spread error | **0.045 m** | 0.584 m |
+
+**The minimum-separation sampler now fails to place every grain**: 27,091 of 32,000 at t = 0.6 s,
+recovering to all 32,000 once the deposit spreads. A field demanding density above the packing limit
+is locally unphysical, so a shortfall is information rather than a defect. The first study placed all
+3,375 and never exposed this.
+
+Threshold ablation, re-run: dropping nodes below 2% of peak takes the spread error from 0.079 m to
+0.045 m and the sampled kinetic energy from 53,314 to 10,739 against a true 6,480.
+
+**Cost:** the Poisson decode is now slow, ~149 s per snapshot against seconds before, because dart
+throwing rejects candidates and there are ten times the grains. Budget ~25 min for ten snapshots.
+
+### Cost of a model step versus the solver, like for like
+
+One autoregressive step advances 0.20 s and costs **44 ms** for a single trajectory or **11.2 ms** per
+trajectory in a batch of 120, against **123 ms** for the solver to cover the same interval for the
+same 32,000 grains. So 2.8x unbatched and 11x batched. Exact GP inference over 900 points and 168
+outputs is the cost. State it as a modest speedup, and state that the model's cost is independent of
+grain count and timestep while the solver's grows with both.
 
 ## What this is
 
@@ -807,6 +980,49 @@ only thing limiting filesystem and network access.
 
 ## Surrogate tooling (Python)
 
+### Memory: the datasets are bigger than they look, and this caused two OOM kills
+
+**`grids.bin` is 4 GB at a 32x32x16 latent and 16 GB at 64x64x16, on a 30 GB machine.** Two mistakes
+in `dataset_io` put two Python processes at ~29 GB RSS and got them killed by the OOM killer
+(2026-08-28, visible in the kernel log):
+
+1. `np.fromfile` read the whole array into **anonymous** memory, which the kernel cannot evict.
+2. Every consumer then wrote `data.grids[data.ok]`, which is **boolean fancy indexing and therefore
+   always allocates a full second array**, even though the mask is all-True in every dataset
+   generated so far. 16 + 16 = 32 GB.
+
+Both are fixed: `load()` now **memory-maps** by default (file-backed page cache, which is reclaimable
+and shows in RSS without being a hazard), and **`Dataset.usable()`** returns the array itself when no
+rollout has to be dropped. Peak RSS for loading and slicing the 16 GB set went from ~29 GB to 35 MB,
+and the fit's heaviest real step from 23 GB to 4.2 GB.
+
+Rules that follow:
+- **Never write `data.grids[mask]`.** Use `data.usable()`, or pass an index and slice inside the
+  consumer. `build_bases` already took an index for exactly this reason and `main()` was defeating it.
+- Basic slices of a memmap (`g[:1416:2, ::2, 0]`) are views and cost nothing; an integer-array index
+  (`g[train_index, ::stride, channel]`) materialises just that slice, which is the intent.
+- `--basis-stride 2` halves the basis snapshots and is the right first lever at 64 nodes.
+- **`/usr/bin/time -v` on a representative slice answers "why is this 23 GB" in thirty seconds.**
+  Treating tight headroom as a scheduling problem, which is what I did first, is the wrong response.
+
+### Three traps that cost real time in this session
+
+- **`python -u` for anything long and backgrounded.** Python block-buffers stdout to a file, and
+  `fit_dynamics.py` only flushes the "building basis" line, so a 40-minute fit showed no progress
+  after basis construction. RSS and CPU time were the only honest signals. Use `-u`.
+- **A `while pgrep -f <pattern>` watcher never exits, because `pgrep -f` matches the watcher's own
+  command line.** This is the same self-match trap as the `pkill` one under the headless-capture
+  section, from the other direction, and both watchers written this session were dead on arrival.
+  Wait on the PID: `while kill -0 <pid>; do sleep 20; done`.
+- **Hardcoded plot limits and annotations silently corrupt a second study.** Three instances found:
+  `ylim=(0, 0.62)` in `plot_chaos`, `ylim=(0.08, 2.6)` in `plot_rollout` (both clipped the new curves
+  off the axis), and the `"...and is numerical creep here"` annotation in `pod_study`, which asserted
+  an interpretation that was false at the new ratio. All three are now data-driven. **Prefer an
+  annotation that prints the measured number over one that interprets it.**
+- **`pod_study.py --per-checkpoint` costs 4x and the FIGURE does not need it.** The momentum-ratio
+  panel uses `ratios`, computed unconditionally; the flag only adds the held-out error table. 3 min
+  without it against 15 with.
+
 The simulator has no Python dependency; the analysis side does. It lives in `surrogate/` behind a
 virtualenv so nothing leaks into the system interpreter:
 ```
@@ -829,6 +1045,13 @@ surrogate/.venv/bin/pip install -r surrogate/requirements.txt
   divergence). It deliberately draws NO model error: the comparison against the realization
   scatter belongs with the model, in `plot_rollout.py`. The surrogate/truncation/floor lines that
   used to be annotated here were removed on 2026-08-27.
+- `surrogate/measure_floor.py` — the irreducible scatter, from `chaos/final_fields*.bin`. Prints the
+  scatter about the ensemble mean (the floor), the pairwise difference, and their ratio. This used to
+  be done ad hoc, which is how a stale floor got reused; validated against the first study's recorded
+  0.154 / 0.225 / 1.463 before being applied to new data.
+- `scripts/probe_outcome.cjs` — deposit geometry off the wire in grain diameters, with wall clearance.
+  The figure that decides whether a candidate configuration is usable: a deposit touching a wall is
+  clipped, and a model fitted to clipped outcomes learns which wall was hit.
 - `surrogate/plot_rollout.py` — both public figures for the dynamics model, from the artifacts
   `fit_dynamics.py --save` writes, so neither needs a refit (a refit is ~10 min; rolling the
   fitted step maps forward is ~25 s). `rollout_error.png` is error vs horizon on a LOG axis (the
