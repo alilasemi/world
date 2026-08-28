@@ -357,7 +357,7 @@ identical, roughly doubled the cost of both the neighbor search and the force ev
 because the fixed row stride of the neighbor array grows with it, pushing the rows of adjacent
 particles apart in memory and breaking coalesced access. Padding a capacity parameter for safety
 cost a factor of two in throughput for nothing. Separately, scaling in three dimensions is
-superlinear: 4.6 times the grains, from 19,700 to 91,000, costs 12.6 times the time, because the
+superlinear, since 4.6 times the particle count, from 19,700 to 91,000, costs 12.6 times the time, because the
 neighbor array overruns the 4 MB last-level cache of this GPU. The bottleneck is memory traffic,
 with arithmetic to spare, which is where the next optimization belongs.
 
@@ -405,11 +405,10 @@ ratios above 2, where `a` is the ratio of initial height to initial radius. The 
 between 3.69 and 4.16 according to whether the equivalent initial radius of a square column
 preserves area or is taken as half the side, and therefore a predicted final radius between
 1.27 m and 1.18 m. Re-run in a domain wide enough that the front is set by the material alone,
-the measured front reaches 1.03 m, 13 to 19 percent short of the correlation. Two known
-deficiencies bear on a gap of that size: the column is only 25 grains across, far from the
+the measured front reaches 1.03 m, 13 to 19 percent short of the correlation.
+This is explained by the fact that the column is only 25 grains across, far from the
 continuum limit of experiments whose ratio of column size to grain size is one to two orders of
-magnitude larger, and the spheres carry no rolling resistance. The comparison is offered as a
-scaling check, not as a calibration.
+magnitude larger, and the fact that the spheres carry no rolling resistance.
 
 Finally, the stability is quantified. A sweep of the timestep against the contact stiffness, each combination
 isolated so that a diverging run cannot terminate the sweep, maps which combinations are stable.
