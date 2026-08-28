@@ -1,3 +1,7 @@
+// Static file server for the WebGL2 client, plus the /config endpoint the page reads to learn
+// which host to open its WebSocket against. Originally scaffolded from a Google Cloud Node
+// sample and rewritten since; kept as its own process so the client needs no build step.
+
 // Import ESM modules
 import express from 'express';
 import { join } from 'node:path';
