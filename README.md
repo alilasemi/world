@@ -1,6 +1,6 @@
 # world
 
-A world model trained on a dynamics simulation of granular material, together with the
+An AI world model trained on a dynamics simulation of granular material, together with the
 simulation that produced it. The simulation advances 32,768 interacting grains faster than
 real time on one GPU, streams its complete state to a browser, and visualizes it instantly
 with no post-processing step. The world model observes a coarse field of that state, predicts

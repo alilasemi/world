@@ -1087,10 +1087,23 @@ This dev box can drive the actual WebGL2 client headlessly — use this to verif
 changes (the `client/world.js` render path, the WS protocol) end-to-end instead of only checking the
 wire bytes, and to record the animations and stills the README uses. **Playwright is installed
 globally** (`playwright --version`, currently 1.61.x) and **system Chrome** is on PATH
-(`/usr/bin/google-chrome`). WebGL works headless via SwiftShader — launch Chrome with
-`channel: 'chrome'` and args `--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`.
+(`/usr/bin/google-chrome`).
 
-Three checked-in Node scripts do this and are the thing to reuse rather than re-deriving:
+**Headless Chrome reaches the real RTX 2080, and this is worth about two orders of magnitude per
+pixel (2026-08-31).** The long-standing recipe here was SwiftShader (`--use-gl=angle
+--use-angle=swiftshader --enable-unsafe-swiftshader`), which renders 32k impostor spheres in
+software at ~4.6 s for a 900x900 frame, i.e. ~5.7 s per megapixel. Passing `--use-gl=angle
+--use-angle=gl --ignore-gpu-blocklist --enable-gpu` instead gets `ANGLE (NVIDIA Corporation, NVIDIA
+GeForce RTX 2080/PCIe/SSE2, OpenGL ES 3.2)` with no display server, and a 12.7-megapixel 3840x3310
+frame then costs 0.55-0.7 s for a whole capture iteration -- solver step batch, render, screenshot
+and PNG encode together -- so the rasterizer has stopped being the bottleneck rather than merely
+getting faster. `--use-angle=vulkan` also reaches the card; `--use-gl=egl` silently falls back to
+SwiftShader, so **confirm the backend rather than assuming it** — read
+`WEBGL_debug_renderer_info`'s `UNMASKED_RENDERER_WEBGL`, which `capture_video.cjs` prints on every
+run for exactly this reason. `capture_gif.cjs` still asks for SwiftShader and was left alone,
+since its clips are small and it is the recipe the README figures were recorded with.
+
+Four checked-in Node scripts do this and are the thing to reuse rather than re-deriving:
 
 - **`scripts/capture_gif.cjs <out.gif> [frames] [fps]`** — records an animated GIF of the live
   client. `CAPTURE_FRAME_DIR` keeps the full-resolution PNGs so a clip can be re-encoded or
@@ -1098,6 +1111,9 @@ Three checked-in Node scripts do this and are the thing to reuse rather than re-
   override the encode.
 - **`scripts/capture_screenshot.cjs <out.png> [frames] [--grid]`** — one still, after a known
   number of frames, optionally with the collision-grid overlay on.
+- **`scripts/capture_video.cjs <out.mp4> [frames] [fps]`** — records an H.264 MP4 for the
+  showcase site: GPU-rendered, supersampled, 60 frames per second, 1x real time. See "Recording
+  real-time video" below.
 - **`scripts/measure_deposit.cjs [seconds]`** — speaks the binary protocol directly (no browser)
   and reduces the final positions to percentiles of radial extent and height. This is the cheap way
   to get a *number* out of a scene without adding a C++ driver.
@@ -1144,10 +1160,66 @@ compound command line (the shell's `/proc/*/cmdline` contains the whole command)
 bare exit code 144 with no output and nothing started. Use `pkill -x world`, or put the kill in a
 separate invocation from the launch.
 
+**Third gotcha, from the same family: in `cmd && VAR=x && long_thing &`, the `&` backgrounds the
+WHOLE and-list**, so the assignment happens in a subshell and the parent shell never sees `VAR`.
+The symptom is a later command in the same invocation resolving `$VAR` to the empty string and
+writing to `/` or reading a path that does not exist. Set variables in their own statement before
+the backgrounded one.
+
+### Recording real-time video for the showcase site
+
+`scripts/capture_video.cjs` plus `demos/{sand,fluid}_video.yaml` produce
+`assets/video/{frictional,frictionless}_collapse.mp4`: 1920x1080 (and a 2560x1440 variant) H.264 at
+60 frames per second, 6.00 s long, playing at **1x real time**. Recorded 2026-08-31; the videos are
+the animated form of `assets/gifs/{frictional,frictionless}_collapse.gif` and show the same scene.
+
+**Real-time playback is a config property, not an encoder flag: `steps_per_frame * dt` must equal
+`1 / fps` exactly.** The capture gates the client's loop, so one frame is one step batch and frame
+spacing in simulated time is exactly that product; encoding at `fps` then plays back at
+`steps_per_frame * dt * fps` times real time. `demos/sand.yaml` happens to satisfy this for the
+GIFs (100 steps at 4e-4 = 0.04 s per frame, and 25 frames per second), which is why they are also
+real time. 60 frames per second needs 1/60 s, and no integer number of 4e-4 steps gives it, so the
+video configs move dt to **1/2520 s with `steps_per_frame: 42`**. dt going *down* rather than up was
+deliberate: it keeps 22 steps per particle-particle contact period, above the 20 this codebase asks
+for, so the change cannot destabilise anything. Verified: `measure_deposit.cjs` at t = 2.4 s gives
+p50 radial extent 0.872 m / p50 height 0.026 m frictionless (recorded values 0.872 / 0.026) and
+0.540 m / 0.043 m frictional (recorded 0.550 / 0.042), so the physics is unchanged.
+
+**Framing has to be measured, and reasoning about it got it wrong twice.** The client's camera fits
+the whole domain box to the canvas and expands the narrower axis to the canvas aspect, so the canvas
+aspect is the only control. Two traps:
+- **The isometric silhouette of the cubic domain is PORTRAIT, not landscape** — aspect 0.877. A
+  world point projects to view-space height `0.8165*z - 0.4082*(x + y)`, spanning [-1.633, 1.633]
+  over the unit cube, against a width of 2.83. Handing the client a 16:9 canvas therefore fits the
+  box to the frame HEIGHT and leaves the grains occupying about a sixth of the frame, which is
+  useless fullscreen. Render nearly square and crop the 16:9 frame out of that instead.
+- **The vertical extent the scene needs is set by the frictionless wall splash, not by the standing
+  column.** The obvious bound is the column's far top corner at +0.25; the frictionless material
+  runs up the far walls and throws grains to **+0.55 at t = 1.0 s**, and the first two attempts
+  clipped them. The check that settled it is worth reusing: threshold the retained full-resolution
+  PNGs and find the topmost and bottommost row, **counting lit pixels per row rather than
+  thresholding luminance**, because the box wireframe (0.45, 0.45, 0.52) is brighter than the shaded
+  underside of a grain and a luminance test just finds the box. A grain is ~21 px across at a
+  3840-wide render, so `> 30` lit pixels in a row means grains.
+
+Final numbers: canvas aspect 1.16, 16:9 crop pushed to 93% of the spare height so the box's top
+vertex leaves the frame (everything above the splash is empty air), leaving 42 px of headroom and
+62 px of footroom at the render resolution, i.e. about two grain diameters. The frames are captured
+at 2x the output resolution and downsampled by the encoder, because the impostor spheres have hard
+`discard` edges with no multisampling and alias badly at native resolution.
+
+**Cost:** ~1.8 frames/s for the frictional clip and ~1.4 for the frictionless one at a 3840x3310
+render, so about 4 minutes per 360-frame clip. `CAPTURE_FRAME_DIR` keeps the full-resolution PNGs
+(~1 GB per clip), which is what makes a re-crop or a second output resolution free; re-simulating to
+change framing is the mistake to avoid.
+
 ## The demo configurations (`demos/`)
 
 `demos/fluid.yaml` and `demos/sand.yaml` differ in exactly one value, `physics.friction`, and
 `demos/grain_detail.yaml` is a 64-grain close-up for the renderer figure.
+`demos/{sand,fluid}_video.yaml` are the same two scenes retimed for a 60 frames-per-second
+real-time capture and differ from their originals only in `dt` and `steps_per_frame` (see
+"Recording real-time video for the showcase site" above).
 
 **Two grain counts appear in the README on purpose, and they are not in conflict.** The
 performance scene is the checked-in `config.yaml`, a 32x32x32 cube, so **32,768** grains, and
