@@ -1,15 +1,16 @@
 # world
 
-An AI world model trained on a dynamics simulation of granular material, together with the
-simulation that produced it. The simulation advances 32,768 interacting grains faster than
-real time on one GPU, streams its complete state to a browser, and visualizes it instantly
-with no post-processing step. The world model observes a coarse field of that state, predicts
-the next one, rolls itself forward, and decodes the result back into particles the solver will
-accept. This project integrates both halves: the dynamics simulation that a learned model is
-usually asked to stand in for, and the learned model itself, scored against the real answer on
-held-out trajectories.
-Because chaos puts a floor under any prediction of this material, that floor is measured here
-too, and the model is reported against it.
+An AI world model trained on a dynamics simulation of granular material,
+together with the simulation that produced it. The simulation advances 32,768
+interacting grains faster than real time on one GPU, streams its complete state
+to a WebGL2 client, and visualizes it instantly with no post-processing step.
+The world model observes a coarse field of that state, predicts the next one,
+rolls itself forward, and decodes the result back into particles the solver will
+accept. This project integrates both halves: the dynamics simulation that a
+learned model is usually asked to stand in for, and the learned model itself,
+scored against the real answer on held-out trajectories.  Because chaos puts a
+floor under any prediction of this material, that floor is measured here too,
+and the model is reported against it.
 
 <div align="center">
   <img src="assets/gifs/frictionless_collapse.gif" width="49%"
