@@ -3,7 +3,7 @@
 An AI world model trained on a dynamics simulation of granular material,
 together with the simulation that produced it. The simulation advances 32,768
 interacting grains faster than real time on one GPU, streams its complete state
-to a WebGL2 client, and visualizes it instantly with no post-processing step.
+to a WebGL2 browser client, and visualizes it instantly with no post-processing step.
 The world model observes a coarse field of that state, predicts the next one,
 rolls itself forward, and decodes the result back into particles the solver will
 accept. This project integrates both halves: the dynamics simulation that a
@@ -20,7 +20,7 @@ and the model is reported against it.
 </div>
 
 <p align="center"><em>
-Collapse of a granular column of 32,500 grains, aspect ratio near 4, released from rest and
+Collapse of a granular column, aspect ratio near 4, released from rest and
 recorded live from the browser client. The two runs differ in one configuration value, the
 Coulomb friction coefficient. Left, <code>friction: 0.0</code>: the material carries no yield
 stress and spreads until it reaches the side walls. Right, <code>friction: 0.5</code>,
