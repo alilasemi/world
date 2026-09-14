@@ -974,16 +974,63 @@ halves failed on re-measurement (three runs per point, `build/bin/profile`, swee
 - **The wall is memory, at 8M grains**, where `cudaMalloc` fails: `n*27*k` ints is 864 B/grain at
   `k=8`, so 6.86M already needs 5.65 GB of the 7.6 GB usable. Behind it, hidden, the same product overflows a
   signed 32-bit index near 9.9M grains.
-- **Not measured:** achieved occupancy. `ncu` hits `ERR_NVGPUCTRPERM` on this box (needs
-  `NVreg_RestrictProfilingToAdminUsers=0` and a reboot). The wave arithmetic is *consistent with*
-  1024 threads/SM, not proof of it.
+- **Now measured, 2026-09-13, via `sudo ncu`.** `ncu` needs root here (`ERR_NVGPUCTRPERM`;
+  permanent fix is `NVreg_RestrictProfilingToAdminUsers=0` in `/etc/modprobe.d/` plus a reboot).
+  At 32,768 grains, four steady-state launches past warmup:
+
+  | | `find_neighbors` (70%) | `compute_rhs` (28%) |
+  |---|---|---|
+  | duration | 306 us | 144 us |
+  | DRAM throughput | **17.2%** | 44.1% |
+  | compute (SM) | **1.7%** | 12.8% |
+  | L1/TEX throughput | 16.9% | 26.5% |
+  | mem pipes busy | **1.4%** | 4.3% |
+  | L1 / L2 hit rate | 33% / **91.7%** | 62% / 64% |
+  | sectors per global ld request | **12.4** | **14.3** |
+  | occupancy, theoretical / achieved | 100% / **65.8%** | 100% / **65.6%** |
+
+  **`find_neighbors` is LATENCY-bound, not bandwidth-bound.** Nothing is saturated and the L2
+  hit rate is 91.7%, so it barely touches DRAM. It waits. The cause is the 66% achieved
+  occupancy, and the mechanism is that `find_neighbors_kernel` bounds its per-cell loop by the
+  real occupied count `num_per_cell[occ_idx]` (1 to 8 grains), so threads in a warp get
+  different trip counts and the warp stalls on its slowest lane. Registers are NOT the limit
+  (profiler allows 6 blocks/SM on registers vs the 4 that fill the warp slots).
+
+  **Coalescing loss is real but 3x, not 8x.** Ideal is 4 sectors per request for a coalesced
+  4-byte load; these ask 12.4 and 14.3. An earlier note predicted ~32 from the 864-byte row
+  stride and that was too pessimistic, because the 91.7% L2 hit rate absorbs the scatter
+  before it becomes DRAM traffic. **Do not quote 32.**
+
+  **The wave arithmetic is confirmed by the tool.** `ncu` prints "only 0.70 full waves" and
+  32,768/47,104 = 0.696. Note achieved occupancy is 66%, so a filled wave is not a fully
+  utilized one; the real-time result stands because it is an end-to-end timing measurement.
+
+- **Ceiling, and the fix order.** At 100% DRAM with the same bytes, the step goes 460 us ->
+  ~125 us, i.e. 5.7 ns/grain and a real-time ceiling near **175,000 grains** (**~130,000** at a
+  realistic 75% of peak). Neighbor-list reuse every 10 steps changes the work rather than its
+  efficiency and pushes the bound to ~**285,000** (**~215,000** at 75%). **Priority order:**
+  (1) neighbor-list reuse every N steps with a skin and a device-side rebuild flag polled
+  infrequently, NOT a per-step readback; (2) several particles per thread assigned **by cell**,
+  which both adds work in flight for the latency bound and removes the trip-count divergence;
+  (3) transpose `device_neighbors` from `[i*27k + j]` to `[j*n + i]` for stride-1 access, which
+  is free and helps `compute_rhs` most since that is the one near a bandwidth limit;
+  (4) spatial sorting last **at this scale** given the 91.7% L2 hit rate, but see the
+  lattice-start caveat below before trusting that.
 
 **The `particles_per_cell` penalty saturates too**, which is new evidence for the coalescing
 reading in "Collision grid" below. At 32,768 grains: 0.421 ms/step at k=4, 0.511 at k=8, 0.645 at
 k=16, then flat from k=32 on at 0.783 / 0.770 / 0.807 / 0.821 / 0.822 for k=32/64/128/256/512.
 Footprint grows **16x** over that flat stretch (108 MB to 1.7 GB) while cost moves 5%, so it is not
-a capacity or DRAM-volume effect. It saturates once the row stride passes a cache line. Still no
-counter separating lost coalescing from the larger working set.
+a capacity or DRAM-volume effect. It saturates once the row stride passes a cache line. The
+sectors-per-request figures above (12.4 and 14.3 against an ideal of 4) are the direct
+confirmation that locality within a cache line is what is being lost.
+
+**Benchmark caveat that limits every number here.** `build/bin/profile` starts from a LATTICE
+and runs 100 steps, so particle indices are still nearly spatially ordered and locality is
+close to best case. A settled or flowing heap after thousands of steps has scrambled indices
+and will be slower than anything recorded here. Re-measure from an `init_type: file` restart of
+a settled state before treating these as steady-state, and expect spatial sorting to matter
+more there than the 91.7% L2 hit rate suggests.
 
 Memory bandwidth, not cache capacity, is the wall to attack before chasing bigger particle
 counts.

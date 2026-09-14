@@ -413,10 +413,55 @@ The timestep is 1e-3 s. The solver therefore runs at real time for as long as th
 in a single wave of the GPU, and above that it is linear and slower than real time. The
 agreement between the wave count and the real-time ceiling is measured rather than designed.
 
-One thing I did not measure is achieved occupancy, because `ncu` cannot read the hardware
-counters on this box without administrator rights. The wave arithmetic is consistent with a
-limit of 1024 threads per SM and is not proof of it, and no counter was collected to separate
-lost coalescing from the larger working set in the capacity sweep above.
+### What the profiler says, and what it costs to fix
+
+The counters above were inferred rather than measured at first, because `ncu` needs
+administrator rights on this box. Running it under `sudo` on 2026-09-13 settled several of
+them, at 32,768 grains and averaged over four steady-state launches past the warmup:
+
+| | `find_neighbors` | `compute_rhs` |
+|---|---|---|
+| share of step time | 70% | 28% |
+| duration | 306 us | 144 us |
+| DRAM throughput | 17.2% | 44.1% |
+| compute (SM) throughput | 1.7% | 12.8% |
+| L1/TEX throughput | 16.9% | 26.5% |
+| memory pipes busy | 1.4% | 4.3% |
+| L1 hit rate | 33% | 62% |
+| L2 hit rate | 91.7% | 64% |
+| sectors per global load request | 12.4 | 14.3 |
+| theoretical occupancy | 100% | 100% |
+| achieved occupancy | 65.8% | 65.6% |
+
+Three things follow, and the first one corrects the framing above.
+
+**The neighbor search is latency-bound, not bandwidth-bound.** Every throughput number in
+that column is low, and a 91.7% L2 hit rate means it barely reaches DRAM. It is waiting. The
+cause is visible in the occupancy row, 65.8% achieved against 100% theoretical, and the
+mechanism is structural. `find_neighbors_kernel` bounds its per-cell loop by the actual
+occupied count `num_per_cell[occ_idx]`, cells hold between one and eight grains, so threads
+in a warp draw different trip counts and the warp waits on its slowest lane. Register
+pressure is not the limit, since the profiler allows six blocks per SM on registers against
+the four that saturate the warp slots.
+
+**Coalescing is genuinely lost, by a factor of three rather than eight.** A fully coalesced
+warp load of 4-byte values wants 4 sectors per request. These ask for 12.4 and 14.3. The
+transposed layout described below would recover most of that. The reason the penalty is 3x
+and not the 8x implied by an 864-byte row stride is the same 91.7% L2 hit rate, which absorbs
+the scatter before it becomes DRAM traffic.
+
+**The wave arithmetic is confirmed independently.** `ncu` reports the launch as "0.70 full
+waves", and 32,768 / 47,104 is 0.696. Achieved occupancy of 66% does not undermine the
+real-time result, which is an end-to-end timing measurement, but it does mean a filled wave
+is not a fully utilized one.
+
+Putting numbers on the ceiling. At 100% DRAM utilization with the same bytes moved, the step
+falls from 460 us to about 125 us, which is 5.7 ns per grain and a real-time ceiling near
+**175,000 grains**. At a realistic 75% of peak bandwidth that is about **130,000**. Adding
+neighbor-list reuse every ten steps changes the work rather than its efficiency and moves the
+bound to roughly **285,000**, or **215,000** at 75%. So the ordering for anyone picking this
+up is neighbor-list reuse first, then more particles per thread assigned by cell to kill the
+trip-count divergence, then the transpose, and spatial sorting last at this scale.
 
 The run breaks at eight million grains, where `cudaMalloc` fails. The neighbor array dominates
 the budget at `n * 27 * particles_per_cell` ints, which is 864 bytes per grain at the
