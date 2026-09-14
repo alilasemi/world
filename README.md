@@ -2,7 +2,7 @@
 
 An AI world model trained on a dynamics simulation of granular material,
 together with the simulation that produced it. The simulation advances 32,768
-interacting grains faster than real time on one GPU, streams its complete state
+interacting grains at 1.95 times real time on one RTX 2080, streams its complete state
 to a WebGL2 browser client, and visualizes it instantly with no post-processing step.
 The world model observes a coarse field of that state, predicts the next one,
 rolls itself forward, and decodes the result back into particles the solver will
@@ -357,10 +357,70 @@ neighbor grid from 8 to 512, a change that leaves correctness and the actual nei
 identical, roughly doubled the cost of both the neighbor search and the force evaluation,
 because the fixed row stride of the neighbor array grows with it, pushing the rows of adjacent
 particles apart in memory and breaking coalesced access. Padding a capacity parameter for safety
-cost a factor of two in throughput for nothing. Separately, scaling in three dimensions is
-superlinear, since 4.6 times the particle count, from 19,700 to 91,000, costs 12.6 times the time, because the
-neighbor array overruns the 4 MB last-level cache of this GPU. The bottleneck is memory traffic,
-with arithmetic to spare, which is where the next optimization belongs.
+cost a factor of two in throughput for nothing.
+
+Sweeping that capacity across its whole range shows the penalty saturating rather than growing
+without bound. At 32,768 grains the step costs 0.421 ms at a capacity of 4, 0.511 at 8, 0.645 at
+16 and 0.783 at 32, and then it stops moving, giving 0.770, 0.807, 0.821 and 0.822 at 64, 128,
+256 and 512. The array grows sixteenfold over that flat stretch, from 108 MB to 1.7 GB, so the
+cost is not a function of how much memory the array occupies. It is a function of how far apart
+consecutive rows sit, and once the stride passes a cache line there is nothing left to lose.
+
+### Scaling, and a correction
+
+An earlier version of this section said that scaling in three dimensions is superlinear, and
+that the cause is the neighbor array overrunning the 4 MB last-level cache. Both halves are
+wrong. I re-measured it on 2026-09-13 with three runs per point, and the correction is more
+interesting than the original claim. Runs above one million grains use a particle radius of
+0.005 and a 200-cell collision grid, so the cells stay about one diameter across and the
+per-grain neighbor structure is unchanged.
+
+| grains | neighbor array | ms per step | ns per grain | note |
+|---|---|---|---|---|
+| 4,096 | 3.4 MB | 0.079 | 19.2 | last point under the 4 MB L2 |
+| 5,832 | 4.8 MB | 0.082 | 14.1 | first point over it |
+| 19,683 | 16 MB | 0.155 | 7.9 | cheapest per grain |
+| 46,656 | 38 MB | 1.06 | 22.7 | GPU saturated |
+| 175,616 | 145 MB | 3.80 | 21.7 | |
+| 857,375 | 706 MB | 17.93 | 20.9 | |
+| 1,953,125 | 1.6 GB | 40.83 | 20.9 | |
+| 4,096,000 | 3.4 GB | 99.25 | 24.2 | |
+| 6,859,000 | 5.7 GB | 177.03 | 25.8 | largest that fits |
+
+The cache explanation fails first. The neighbor array passes 4 MB at about 4,850 grains, and the
+cost per grain falls straight through that point instead of rising, from 19.2 ns to 14.1 ns.
+Nothing happens there at all, and the array is already several times the size of the cache
+everywhere in the range the original claim quoted.
+
+The superlinearity fails next, because there is no superlinear regime. Cost per grain is high
+when the device is nearly idle, bottoms out near 19,700 grains, climbs while the GPU fills, and
+then stays between 20.6 and 26.2 ns from 46,656 grains to 6.86 million, a span of 147x, with the
+top of that range appearing only above about three million. That is linear scaling. The original
+12.6x figure compared 19,700 grains, where the GPU is roughly 40 percent occupied, against
+91,000, which is already into its second wave of resident threads. It measured the device
+filling up rather than anything about the memory system.
+
+The saturation point is worth naming, because it turns out to be the real-time operating point.
+This 2080 holds 46 SMs times 1024 resident threads, or 47,104 threads, which
+`cudaGetDeviceProperties` confirms directly, and one thread handles one grain. Dividing the measured step cost by the number of full waves gives 1.07, 0.97, 1.06,
+1.01 and 1.02 ms per wave from 46,656 to 175,616 grains, so a wave costs about one millisecond.
+The timestep is 1e-3 s. The solver therefore runs at real time for as long as the problem fits
+in a single wave of the GPU, and above that it is linear and slower than real time. The
+agreement between the wave count and the real-time ceiling is measured rather than designed.
+
+One thing I did not measure is achieved occupancy, because `ncu` cannot read the hardware
+counters on this box without administrator rights. The wave arithmetic is consistent with a
+limit of 1024 threads per SM and is not proof of it, and no counter was collected to separate
+lost coalescing from the larger working set in the capacity sweep above.
+
+The run breaks at eight million grains, where `cudaMalloc` fails. The neighbor array dominates
+the budget at `n * 27 * particles_per_cell` ints, which is 864 bytes per grain at the
+checked-in capacity of 8, so 6.86 million grains already needs 5.65 GB of the card's 7.6 GB of usable memory. A
+second limit sits just behind that one and is hidden by it, since the same product overflows a
+signed 32-bit index at about 9.9 million grains.
+
+The bottleneck is memory traffic, with arithmetic to spare, which is where the next
+optimization belongs.
 
 It is worth being transparent about how modest the speedup over the solver is. One
 autoregressive step advances 0.20 s of simulated time and costs 44 ms for a single trajectory,

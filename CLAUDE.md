@@ -947,9 +947,41 @@ config is sized to it rather than to a headline particle count. Measured on the 
 | 343,000 (70³) | 8.44 | 0.12x |
 
 Through the full server path (unpack + WebSocket) the checked-in config measures **1.86x real
-time**. Note the scaling is *superlinear*: 4.6x the grains costs 12.6x the time between 19.7k and
-91k, because `device_neighbors` (`n*27*k` ints) blows past the 2080's 4 MB L2. That is the wall to
-attack before chasing bigger particle counts.
+time**.
+
+**Corrected 2026-09-13, and the old claim here was wrong twice over.** This section used to say
+the scaling is *superlinear* because `device_neighbors` "blows past the 2080's 4 MB L2". Both
+halves failed on re-measurement (three runs per point, `build/bin/profile`, sweeping
+`cube_length_*`; above 1M grains at radius 0.005 with a 200-cell grid so cells stay ~1 diameter):
+
+- **The L2 story is dead.** `device_neighbors` (`n*27*k` ints) passes 4 MB at only ~4,850 grains,
+  and cost per grain *falls* through that point, 19.2 ns at 4,096 to 14.1 ns at 5,832. The array
+  is already several times L2 everywhere in the 19.7k-to-91k range the old claim quoted, so
+  nothing crosses a threshold between those two points.
+- **There is no superlinear regime.** Cost per grain bottoms near 19,683 (7.9 ns), climbs while
+  the device fills, then sits between **20.6 and 26.2 ns from 46,656 to 6,859,000 grains** (147x).
+  That is linear. The old 12.6x compared a ~40%-occupied GPU against one already in its second
+  wave, so it measured the device filling up.
+- **The saturation point is the real-time point, and that is the useful fact.** 46 SMs x 1024
+  resident threads = 47,104 (`cudaGetDeviceProperties`), one thread per grain. Step cost divided by full waves gives 1.07,
+  0.97, 1.06, 1.01, 1.02 ms/wave over 46,656-175,616, so a wave costs ~1 ms against a 1e-3 s
+  timestep. **The solver runs at real time exactly while the problem fits in one wave.**
+- **The wall is memory, at 8M grains**, where `cudaMalloc` fails: `n*27*k` ints is 864 B/grain at
+  `k=8`, so 6.86M already needs 5.65 GB of the 7.6 GB usable. Behind it, hidden, the same product overflows a
+  signed 32-bit index near 9.9M grains.
+- **Not measured:** achieved occupancy. `ncu` hits `ERR_NVGPUCTRPERM` on this box (needs
+  `NVreg_RestrictProfilingToAdminUsers=0` and a reboot). The wave arithmetic is *consistent with*
+  1024 threads/SM, not proof of it.
+
+**The `particles_per_cell` penalty saturates too**, which is new evidence for the coalescing
+reading in "Collision grid" below. At 32,768 grains: 0.421 ms/step at k=4, 0.511 at k=8, 0.645 at
+k=16, 0.783 at k=32, then flat at 0.770 / 0.807 / 0.821 / 0.822 for k=64/128/256/512. Footprint
+grows **16x** over that flat stretch (108 MB to 1.7 GB) while cost moves 5%, so the penalty is not
+a capacity or DRAM-volume effect. It saturates once the row stride passes a cache line. Still no
+counter separating lost coalescing from the larger working set.
+
+Memory bandwidth, not cache capacity, is the wall to attack before chasing bigger particle
+counts.
 
 ### Sandbox and GPU access
 
