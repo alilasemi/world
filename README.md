@@ -393,12 +393,17 @@ Nothing happens there at all, and the array is already several times the size of
 everywhere in the range the original claim quoted.
 
 The superlinearity fails next, because there is no superlinear regime. Cost per grain is high
-when the device is nearly idle, bottoms out near 19,700 grains, climbs while the GPU fills, and
-then stays between 20.6 and 26.2 ns from 46,656 grains to 6.86 million, a span of 147x, with the
-top of that range appearing only above about three million. That is linear scaling. The original
-12.6x figure compared 19,700 grains, where the GPU is roughly 40 percent occupied, against
-91,000, which is already into its second wave of resident threads. It measured the device
-filling up rather than anything about the memory system.
+when the device is nearly idle, bottoms out near 19,700 grains, and climbs while the GPU fills.
+Above saturation it settles into two regimes rather than one flat line, and it is worth keeping
+them apart. From 175,000 to 1.95 million grains the cost holds 20.57 to 21.80 ns, a spread of
+6 percent, which is inside run-to-run scatter and is linear scaling. From 2.74 million to 6.86
+million it climbs monotonically from 22.45 to 26.15 ns, a rise of 25 percent that is well
+outside scatter and whose cause I did not isolate. Growing TLB pressure and worse DRAM row
+locality as the footprint passes 2 GB are the untested candidates. Calling the whole span from
+47,000 grains to 6.86 million flat would overstate it, since the spread there is 27 percent peak
+to peak. Either way the original 12.6x figure compared 19,700 grains, where the GPU is roughly
+40 percent occupied, against 91,000, which is already into its second wave of resident threads.
+It measured the device filling up rather than anything about the memory system.
 
 The saturation point is worth naming, because it turns out to be the real-time operating point.
 This 2080 holds 46 SMs times 1024 resident threads, or 47,104 threads, which

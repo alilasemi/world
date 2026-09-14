@@ -958,10 +958,15 @@ halves failed on re-measurement (three runs per point, `build/bin/profile`, swee
   and cost per grain *falls* through that point, 19.2 ns at 4,096 to 14.1 ns at 5,832. The array
   is already several times L2 everywhere in the 19.7k-to-91k range the old claim quoted, so
   nothing crosses a threshold between those two points.
-- **There is no superlinear regime.** Cost per grain bottoms near 19,683 (7.9 ns), climbs while
-  the device fills, then sits between **20.6 and 26.2 ns from 46,656 to 6,859,000 grains** (147x).
-  That is linear. The old 12.6x compared a ~40%-occupied GPU against one already in its second
-  wave, so it measured the device filling up.
+- **There is no superlinear regime, but there are two regimes above saturation.** Cost per grain
+  bottoms near 19,683 (7.9 ns) and climbs while the device fills. Then **175k to 1.95M holds
+  20.57 to 21.80 ns, a 6% spread**, which is inside run-to-run scatter and is linear. **2.74M to
+  6.86M climbs monotonically, 22.45 to 26.15 ns, +25%**, which is not scatter and whose cause was
+  **not** isolated (TLB pressure and DRAM row locality past a 2 GB footprint are the untested
+  candidates). **Do not call the whole 47k-to-6.86M span flat.** An earlier draft of this section
+  did, and the spread over it is +16.8%/-8.2% about the mean, 27% peak to peak. The old 12.6x
+  compared a ~40%-occupied GPU against one already in its second wave, so it measured the device
+  filling up.
 - **The saturation point is the real-time point, and that is the useful fact.** 46 SMs x 1024
   resident threads = 47,104 (`cudaGetDeviceProperties`), one thread per grain. Step cost divided by full waves gives 1.07,
   0.97, 1.06, 1.01, 1.02 ms/wave over 46,656-175,616, so a wave costs ~1 ms against a 1e-3 s
@@ -975,8 +980,8 @@ halves failed on re-measurement (three runs per point, `build/bin/profile`, swee
 
 **The `particles_per_cell` penalty saturates too**, which is new evidence for the coalescing
 reading in "Collision grid" below. At 32,768 grains: 0.421 ms/step at k=4, 0.511 at k=8, 0.645 at
-k=16, 0.783 at k=32, then flat at 0.770 / 0.807 / 0.821 / 0.822 for k=64/128/256/512. Footprint
-grows **16x** over that flat stretch (108 MB to 1.7 GB) while cost moves 5%, so the penalty is not
+k=16, then flat from k=32 on at 0.783 / 0.770 / 0.807 / 0.821 / 0.822 for k=32/64/128/256/512.
+Footprint grows **16x** over that flat stretch (108 MB to 1.7 GB) while cost moves 5%, so it is not
 a capacity or DRAM-volume effect. It saturates once the row stride passes a cache line. Still no
 counter separating lost coalescing from the larger working set.
 
